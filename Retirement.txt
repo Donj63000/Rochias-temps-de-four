@@ -1,0 +1,9 @@
+Plan de retraite de l'application
+================================
+
+1. Conserver une copie archivée du dossier complet (code, configurations, jeux d'essai) et vérifier qu'elle reste lisible.
+2. Documenter le mode de calcul retenu (Ancrage‑4 ou Régression) ainsi que les paramètres utilisés pour pouvoir rejouer les résultats.
+3. Laisser une dernière version exécutable (.exe) générée par l'intégration continue et noter la date de génération.
+4. Prévenir l'équipe de production qu'aucune nouvelle mise à jour n'est prévue et fournir le guide d'utilisation final.
+5. Fermer les accès inutiles (droits de commit, clés API) et conserver uniquement un compte responsable de la conservation.
+6. Écrire un court bilan fonctionnel : objectifs atteints, limites connues et pistes pour une éventuelle relève.
