@@ -195,12 +195,16 @@ class SegmentedBar(tk.Canvas):
 
         pct = 0.0 if self.total <= 1e-9 else min(1.0, self.elapsed / self.total)
         inner_width = max(0, track_right - track_left)
-        fill_w = int(pct * inner_width)
+        fill_w = 0
+        if pct > 0.0 and inner_width > 0:
+            fill_w = max(1, min(inner_width, math.ceil(pct * inner_width)))
+
         if fill_w > 0:
+            fill_right = min(track_right, track_left + fill_w)
             self.create_rectangle(
                 track_left,
                 track_top,
-                track_left + fill_w,
+                fill_right,
                 track_bot,
                 fill=FILL,
                 outline=FILL,
@@ -208,7 +212,7 @@ class SegmentedBar(tk.Canvas):
             self.create_line(
                 track_left,
                 track_top,
-                track_left + fill_w,
+                fill_right,
                 track_top,
                 fill=GLOW,
                 width=2,
