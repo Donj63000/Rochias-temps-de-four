@@ -118,22 +118,22 @@ def compute_times(f1, f2, f3, mode="anchor"):
     return t1, t2, t3, total, (d, K1, K2, K3)
 
 # ================== Thème ==================
-BG               = "#020a06"
-CARD             = "#062016"
-BORDER           = "#0f3c26"
-ACCENT           = "#22c55e"
-ACCENT_HOVER     = "#16a34a"
-ACCENT_DISABLED  = "#113923"
-SECONDARY        = "#134e4a"
-SECONDARY_HOVER  = "#166656"
-FIELD            = "#0b2916"
-FIELD_FOCUS      = "#134127"
-TEXT             = "#ecfdf5"
-SUBTEXT          = "#86efac"
-RED              = "#f87171"   # séparateurs fixes
+BG               = "#f6fbf7"
+CARD             = "#ffffff"
+BORDER           = "#cde8d9"
+ACCENT           = "#16a34a"
+ACCENT_HOVER     = "#15803d"
+ACCENT_DISABLED  = "#9dd6b5"
+SECONDARY        = "#e7f6ed"
+SECONDARY_HOVER  = "#d1eddb"
+FIELD            = "#ffffff"
+FIELD_FOCUS      = "#e2f4e8"
+TEXT             = "#065f46"
+SUBTEXT          = "#1b8f5a"
+RED              = "#dc2626"   # séparateurs fixes
 FILL             = ACCENT
-TRACK            = "#04160c"
-GLOW             = "#34d399"
+TRACK            = "#dcfce7"
+GLOW             = "#86efac"
 
 TICK_SECONDS = 1.0  # mise à jour 1 s (temps réel)
 
@@ -239,7 +239,7 @@ class FourApp(tk.Tk):
         self.option_add("*TRadiobutton.Cursor", "hand2")
         self.option_add("*Entry.insertBackground", TEXT)
         self.option_add("*Entry.selectBackground", ACCENT)
-        self.option_add("*Entry.selectForeground", BG)
+        self.option_add("*Entry.selectForeground", "#ffffff")
 
         # États animation
         self.animating = False
@@ -268,14 +268,14 @@ class FourApp(tk.Tk):
         style.configure("CardInner.TFrame", background=CARD)
         style.configure("TLabel", background=BG, foreground=TEXT, font=base_font)
         style.configure("Card.TLabel", background=CARD, foreground=TEXT, font=base_font)
-        style.configure("Title.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI Semibold", 16))
+        style.configure("Title.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 16))
         style.configure("CardHeading.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 13))
         style.configure("Subtle.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI", 10))
         style.configure("Hint.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI", 10, "italic"))
         style.configure("TableHead.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI Semibold", 11))
         style.configure("Big.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI", 20, "bold"))
         style.configure("Result.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI", 20, "bold"))
-        style.configure("Mono.TLabel", background=CARD, foreground=SUBTEXT, font=("Consolas", 11))
+        style.configure("Mono.TLabel", background=CARD, foreground="#3b7e63", font=("Consolas", 11))
         style.configure("Status.TLabel", background=CARD, foreground=SUBTEXT, font=("Consolas", 11))
         style.configure("Dark.TSeparator", background=BORDER)
         style.configure("TSeparator", background=BORDER)
@@ -284,7 +284,7 @@ class FourApp(tk.Tk):
         style.configure(
             "Accent.TButton",
             background=ACCENT,
-            foreground=BG,
+            foreground="#ffffff",
             padding=10,
             borderwidth=0,
             focusthickness=0,
@@ -294,7 +294,7 @@ class FourApp(tk.Tk):
         style.map(
             "Accent.TButton",
             background=[("active", ACCENT_HOVER), ("disabled", ACCENT_DISABLED)],
-            foreground=[("disabled", "#4b5563")],
+            foreground=[("disabled", "#0f5132")],
         )
 
         style.configure(
@@ -309,8 +309,8 @@ class FourApp(tk.Tk):
         )
         style.map(
             "Ghost.TButton",
-            background=[("active", SECONDARY_HOVER), ("disabled", ACCENT_DISABLED)],
-            foreground=[("disabled", "#4b5563")],
+            background=[("active", SECONDARY_HOVER), ("disabled", "#edf6f0")],
+            foreground=[("disabled", "#7c8f82")],
         )
 
         style.configure(
@@ -321,21 +321,26 @@ class FourApp(tk.Tk):
             bordercolor=BORDER,
             insertcolor=TEXT,
         )
-        style.map("Dark.TEntry", fieldbackground=[("focus", FIELD_FOCUS)])
+        style.map(
+            "Dark.TEntry",
+            fieldbackground=[("focus", FIELD_FOCUS)],
+            bordercolor=[("focus", ACCENT)],
+            foreground=[("disabled", SUBTEXT)],
+        )
 
         style.configure(
             "Accent.TRadiobutton",
             background=CARD,
             foreground=TEXT,
-            indicatorcolor=SECONDARY,
+            indicatorcolor=BORDER,
             focuscolor=ACCENT,
             padding=4,
             font=base_font,
         )
         style.map(
             "Accent.TRadiobutton",
-            indicatorcolor=[("selected", ACCENT), ("!selected", SECONDARY)],
-            foreground=[("disabled", "#4b5563")],
+            indicatorcolor=[("selected", ACCENT), ("!selected", BORDER)],
+            foreground=[("disabled", "#7c8f82")],
         )
 
         self.style = style
