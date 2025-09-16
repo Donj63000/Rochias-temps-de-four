@@ -242,7 +242,9 @@ class FourApp(tk.Tk):
         self.paused = False
         self.seg_idx = 0
         self.seg_start = 0.0
-        self.seg_totals = [0.0, 0.0, 0.0]   # secondes réelles (t1,t2,t3)
+        self.seg_durations = [0.0, 0.0, 0.0]   # secondes réelles (t1,t2,t3)
+        self.seg_distances = [0.0, 0.0, 0.0]   # longueurs équivalentes (K1,K2,K3)
+        self.seg_speeds = [0.0, 0.0, 0.0]      # vitesses (Hz) des 3 tapis
         self.mode = tk.StringVar(value="anchor")  # 'anchor' ou 'reg'
 
         # UI
@@ -516,6 +518,9 @@ class FourApp(tk.Tk):
         self.lbl_total_big.config(text="Temps total (modèle) : —")
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="disabled", text="Pause")
+        self.seg_durations = [0.0, 0.0, 0.0]
+        self.seg_distances = [0.0, 0.0, 0.0]
+        self.seg_speeds = [0.0, 0.0, 0.0]
         self._update_model_label()
 
     def on_calculer(self):
@@ -533,16 +538,24 @@ class FourApp(tk.Tk):
         self.lbl_total_big.config(text=f"Temps total (modèle) : {fmt_minutes(Ttot)}  ({Ttot:.2f} min)")
 
         # Barres : init temps réels (secondes) + texte
-        self.seg_totals = [t1*60.0, t2*60.0, t3*60.0]
+        self.seg_durations = [t1*60.0, t2*60.0, t3*60.0]
+        self.seg_distances = [K1, K2, K3]
+        self.seg_speeds = [f1, f2, f3]
         for i in range(3):
-            tot = self.seg_totals[i]
-            self.bars[i].set_total(tot)
-            self.bar_texts[i].config(text=f"0%  •  00:00:00 / {fmt_hms(tot)}  •  en attente")
+            distance = max(1e-9, float(self.seg_distances[i]))
+            duree = self.seg_durations[i]
+            vitesse = self.seg_speeds[i]
+            self.bars[i].set_total(distance)
+            self.bar_texts[i].config(
+                text=(
+                    f"0%  •  vitesse {vitesse:.2f} Hz  •  00:00:00 / {fmt_hms(duree)}  •  en attente"
+                )
+            )
         self.btn_start.config(state="normal"); self.btn_pause.config(state="disabled")
 
     def on_start(self):
         if self.animating: return
-        if sum(self.seg_totals) <= 0:
+        if sum(self.seg_durations) <= 0:
             messagebox.showwarning("Calcul manquant", "Clique d'abord sur « Calculer »."); return
         self.animating = True
         self.paused = False
@@ -570,15 +583,26 @@ class FourApp(tk.Tk):
             self.after(int(TICK_SECONDS*1000), self._tick); return
 
         i = self.seg_idx
-        dur = max(1e-6, self.seg_totals[i])
+        dur = max(1e-6, self.seg_durations[i])
+        distance_totale = max(1e-9, self.seg_distances[i])
+        vitesse = self.seg_speeds[i]
         now = time.perf_counter()
         elapsed = now - self.seg_start
-        prog = elapsed / dur
+        distance_parcourue = max(0.0, vitesse * (elapsed / 60.0))
+        if distance_parcourue >= distance_totale:
+            distance_parcourue = distance_totale
+            prog = 1.0
+        else:
+            prog = distance_parcourue / distance_totale
 
         if prog >= 1.0:
             # Terminer ce segment
-            self.bars[i].set_progress(dur)
-            self.bar_texts[i].config(text=f"100%  •  {fmt_hms(dur)} / {fmt_hms(dur)}  •  terminé")
+            self.bars[i].set_progress(distance_totale)
+            self.bar_texts[i].config(
+                text=(
+                    f"100%  •  vitesse {vitesse:.2f} Hz  •  {fmt_hms(dur)} / {fmt_hms(dur)}  •  terminé"
+                )
+            )
             self.seg_idx += 1
             if self.seg_idx >= 3:
                 self.animating = False
@@ -586,13 +610,25 @@ class FourApp(tk.Tk):
             # suivant
             self.seg_start = now
             j = self.seg_idx
-            self.bar_texts[j].config(text=f"0%  •  00:00:00 / {fmt_hms(self.seg_totals[j])}  •  en cours…")
+            vitesse_j = self.seg_speeds[j]
+            duree_j = self.seg_durations[j]
+            distance_j = max(1e-9, self.seg_distances[j])
+            self.bars[j].set_total(distance_j)
+            self.bar_texts[j].config(
+                text=(
+                    f"0%  •  vitesse {vitesse_j:.2f} Hz  •  00:00:00 / {fmt_hms(duree_j)}  •  en cours…"
+                )
+            )
             self.after(int(TICK_SECONDS*1000), self._tick)
             return
 
         pct = max(0.0, min(1.0, prog)) * 100.0
-        self.bars[i].set_progress(elapsed)
-        self.bar_texts[i].config(text=f"{pct:5.1f}%  •  {fmt_hms(elapsed)} / {fmt_hms(dur)}  •  en cours…")
+        self.bars[i].set_progress(distance_parcourue)
+        self.bar_texts[i].config(
+            text=(
+                f"{pct:5.1f}%  •  vitesse {vitesse:.2f} Hz  •  {fmt_hms(elapsed)} / {fmt_hms(dur)}  •  en cours…"
+            )
+        )
 
         self.after(int(TICK_SECONDS*1000), self._tick)
 
