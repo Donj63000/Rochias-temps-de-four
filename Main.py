@@ -136,6 +136,7 @@ TRACK            = "#04160c"
 GLOW             = "#34d399"
 
 TICK_SECONDS = 1.0  # mise à jour 1 s (temps réel)
+SIM_TARGET_REAL_SECONDS = 30.0  # durée visée pour le tapis le plus long (en secondes réelles)
 
 # ================== Barre Canvas segmentée ==================
 class SegmentedBar(tk.Canvas):
@@ -241,8 +242,11 @@ class FourApp(tk.Tk):
         self.animating = False
         self.paused = False
         self.seg_idx = 0
-        self.seg_start = 0.0
-        self.seg_totals = [0.0, 0.0, 0.0]   # secondes réelles (t1,t2,t3)
+        self.seg_durations = [0.0, 0.0, 0.0]   # secondes réelles (t1,t2,t3)
+        self.seg_speeds = [0.0, 0.0, 0.0]      # vitesses (Hz) des 3 tapis
+        self.seg_elapsed = 0.0                 # secondes simulées écoulées sur le segment courant
+        self.last_tick = 0.0                   # horodatage réel du dernier tick
+        self.sim_speedup = 1.0                 # facteur d'accélération de la simulation
         self.mode = tk.StringVar(value="anchor")  # 'anchor' ou 'reg'
 
         # UI
@@ -483,6 +487,13 @@ class FourApp(tk.Tk):
             self.bars.append(bar)
             self.bar_texts.append(txt)
 
+        self.lbl_speed = ttk.Label(
+            pcard,
+            text="Facteur de simulation : — (en attente)",
+            style="Hint.TLabel",
+        )
+        self.lbl_speed.pack(anchor="w", pady=(4, 0))
+
         footer = ttk.Frame(self, style="TFrame")
         footer.pack(fill="x", padx=18, pady=(0, 16))
         ttk.Label(
@@ -503,12 +514,31 @@ class FourApp(tk.Tk):
         if hasattr(self, "lbl_model"):
             self.lbl_model.config(text=text)
 
+    def _compute_speedup(self) -> float:
+        if not self.seg_durations:
+            return 1.0
+        max_dur = max(self.seg_durations)
+        if max_dur <= 0.0:
+            return 1.0
+        return max(1.0, max_dur / SIM_TARGET_REAL_SECONDS)
+
+    def _update_speed_label(self):
+        if not hasattr(self, "lbl_speed"):
+            return
+        factor = float(getattr(self, "sim_speedup", 1.0))
+        if not math.isfinite(factor) or factor <= 0:
+            factor = 1.0
+        if factor <= 1.05:
+            text = "Facteur de simulation : ×1.0  (temps réel)"
+        else:
+            text = f"Facteur de simulation : ×{factor:.1f}  (1 s réel = {fmt_hms(factor)} simulé)"
+        self.lbl_speed.config(text=text)
+
     # ---------- Actions ----------
     def on_reset(self):
         self.animating = False
         self.paused = False
         self.seg_idx = 0
-        self.seg_start = 0.0
         for b, t in zip(self.bars, self.bar_texts):
             b.reset(); t.config(text="—")
         for lf, lt in self.row_labels:
@@ -516,6 +546,13 @@ class FourApp(tk.Tk):
         self.lbl_total_big.config(text="Temps total (modèle) : —")
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="disabled", text="Pause")
+        self.seg_durations = [0.0, 0.0, 0.0]
+        self.seg_speeds = [0.0, 0.0, 0.0]
+        self.seg_elapsed = 0.0
+        self.last_tick = 0.0
+        self.sim_speedup = 1.0
+        if hasattr(self, "lbl_speed"):
+            self.lbl_speed.config(text="Facteur de simulation : — (en attente)")
         self._update_model_label()
 
     def on_calculer(self):
@@ -525,6 +562,8 @@ class FourApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Entrées invalides", f"Saisie invalide : {e}"); return
 
+        self.animating = False
+        self.paused = False
         t1, t2, t3, Ttot, (d,K1,K2,K3) = compute_times(f1, f2, f3, self.mode.get())
 
         # Affichage
@@ -533,21 +572,36 @@ class FourApp(tk.Tk):
         self.lbl_total_big.config(text=f"Temps total (modèle) : {fmt_minutes(Ttot)}  ({Ttot:.2f} min)")
 
         # Barres : init temps réels (secondes) + texte
-        self.seg_totals = [t1*60.0, t2*60.0, t3*60.0]
+        self.seg_durations = [t1*60.0, t2*60.0, t3*60.0]
+        self.seg_speeds = [f1, f2, f3]
+        self.seg_idx = 0
+        self.seg_elapsed = 0.0
+        self.last_tick = 0.0
+        self.sim_speedup = self._compute_speedup()
+        self._update_speed_label()
         for i in range(3):
-            tot = self.seg_totals[i]
-            self.bars[i].set_total(tot)
-            self.bar_texts[i].config(text=f"0%  •  00:00:00 / {fmt_hms(tot)}  •  en attente")
+            duree = self.seg_durations[i]
+            vitesse = self.seg_speeds[i]
+            self.bars[i].set_total(max(duree, 0.0))
+            self.bars[i].set_progress(0.0)
+            self.bar_texts[i].config(
+                text=(
+                    f"0%  •  vitesse {vitesse:.2f} Hz  •  00:00:00 / {fmt_hms(duree)}  •  en attente"
+                )
+            )
         self.btn_start.config(state="normal"); self.btn_pause.config(state="disabled")
 
     def on_start(self):
         if self.animating: return
-        if sum(self.seg_totals) <= 0:
+        if sum(self.seg_durations) <= 0:
             messagebox.showwarning("Calcul manquant", "Clique d'abord sur « Calculer »."); return
         self.animating = True
         self.paused = False
         self.seg_idx = 0
-        self.seg_start = time.perf_counter()
+        self.seg_elapsed = 0.0
+        self.last_tick = time.perf_counter()
+        if self.sim_speedup <= 0 or not math.isfinite(self.sim_speedup):
+            self.sim_speedup = 1.0
         self.btn_pause.config(state="normal", text="Pause")
         self._tick()
 
@@ -555,12 +609,11 @@ class FourApp(tk.Tk):
         if not self.animating: return
         if not self.paused:
             self.paused = True
-            self.pause_t0 = time.perf_counter()
+            self.last_tick = time.perf_counter()
             self.btn_pause.config(text="Reprendre")
         else:
-            delta = time.perf_counter() - self.pause_t0
-            self.seg_start += delta
             self.paused = False
+            self.last_tick = time.perf_counter()
             self.btn_pause.config(text="Pause")
             self._tick()
 
@@ -569,30 +622,57 @@ class FourApp(tk.Tk):
         if self.paused:
             self.after(int(TICK_SECONDS*1000), self._tick); return
 
-        i = self.seg_idx
-        dur = max(1e-6, self.seg_totals[i])
         now = time.perf_counter()
-        elapsed = now - self.seg_start
-        prog = elapsed / dur
+        delta_reel = now - self.last_tick
+        if delta_reel < 0:
+            delta_reel = 0.0
+        self.last_tick = now
+        self.seg_elapsed += delta_reel * self.sim_speedup
 
-        if prog >= 1.0:
-            # Terminer ce segment
-            self.bars[i].set_progress(dur)
-            self.bar_texts[i].config(text=f"100%  •  {fmt_hms(dur)} / {fmt_hms(dur)}  •  terminé")
+        while True:
+            i = self.seg_idx
+            if i >= 3:
+                self.animating = False
+                self.btn_pause.config(state="disabled", text="Pause")
+                return
+
+            duree = self.seg_durations[i]
+            vitesse = self.seg_speeds[i]
+
+            if duree <= 1e-9:
+                self.bars[i].set_total(1.0)
+                self.bars[i].set_progress(1.0)
+                self.bar_texts[i].config(
+                    text=(
+                        f"100%  •  vitesse {vitesse:.2f} Hz  •  00:00:00 / 00:00:00  •  terminé"
+                    )
+                )
+                self.seg_idx += 1
+                continue
+
+            if self.seg_elapsed + 1e-9 < duree:
+                pct = max(0.0, min(1.0, self.seg_elapsed / duree)) * 100.0
+                self.bars[i].set_progress(self.seg_elapsed)
+                self.bar_texts[i].config(
+                    text=(
+                        f"{pct:5.1f}%  •  vitesse {vitesse:.2f} Hz  •  {fmt_hms(self.seg_elapsed)} / {fmt_hms(duree)}  •  en cours…"
+                    )
+                )
+                break
+
+            # Terminer ce segment et transférer le reliquat au suivant
+            self.bars[i].set_progress(duree)
+            self.bar_texts[i].config(
+                text=(
+                    f"100%  •  vitesse {vitesse:.2f} Hz  •  {fmt_hms(duree)} / {fmt_hms(duree)}  •  terminé"
+                )
+            )
             self.seg_idx += 1
+            self.seg_elapsed = max(0.0, self.seg_elapsed - duree)
             if self.seg_idx >= 3:
                 self.animating = False
-                self.btn_pause.config(state="disabled", text="Pause"); return
-            # suivant
-            self.seg_start = now
-            j = self.seg_idx
-            self.bar_texts[j].config(text=f"0%  •  00:00:00 / {fmt_hms(self.seg_totals[j])}  •  en cours…")
-            self.after(int(TICK_SECONDS*1000), self._tick)
-            return
-
-        pct = max(0.0, min(1.0, prog)) * 100.0
-        self.bars[i].set_progress(elapsed)
-        self.bar_texts[i].config(text=f"{pct:5.1f}%  •  {fmt_hms(elapsed)} / {fmt_hms(dur)}  •  en cours…")
+                self.btn_pause.config(state="disabled", text="Pause")
+                return
 
         self.after(int(TICK_SECONDS*1000), self._tick)
 
