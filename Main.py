@@ -349,7 +349,6 @@ class FourApp(tk.Tk):
             highlightthickness=1,
             bd=0,
         )
-        wrapper.pack_propagate(False)
         inner = ttk.Frame(wrapper, style="Card.TFrame", padding=padding)
         inner.pack(fill="both", expand=True)
         wrapper.pack(**pack_kwargs)
@@ -468,7 +467,7 @@ class FourApp(tk.Tk):
         )
         ttk.Label(card_out, text=params_txt, style="Mono.TLabel").pack(anchor="w")
 
-        pcard = self._card(self, fill="x", padx=18, pady=8, padding=(20, 16))
+        pcard = self._card(self, fill="x", expand=True, padx=18, pady=8, padding=(20, 16))
         ttk.Label(
             pcard,
             text="Barres de chargement (temps réel, 3 cellules)",
