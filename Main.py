@@ -118,14 +118,22 @@ def compute_times(f1, f2, f3, mode="anchor"):
     return t1, t2, t3, total, (d, K1, K2, K3)
 
 # ================== Thème ==================
-BG      = "#0b1020"
-CARD    = "#121a34"
-ACCENT  = "#3b82f6"
-TEXT    = "#e5e7eb"
-SUBTEXT = "#93c5fd"
-RED     = "#ef4444"   # séparateurs
-FILL    = ACCENT
-TRACK   = "#0f172a"
+BG               = "#020a06"
+CARD             = "#062016"
+BORDER           = "#0f3c26"
+ACCENT           = "#22c55e"
+ACCENT_HOVER     = "#16a34a"
+ACCENT_DISABLED  = "#113923"
+SECONDARY        = "#134e4a"
+SECONDARY_HOVER  = "#166656"
+FIELD            = "#0b2916"
+FIELD_FOCUS      = "#134127"
+TEXT             = "#ecfdf5"
+SUBTEXT          = "#86efac"
+RED              = "#f87171"   # séparateurs fixes
+FILL             = ACCENT
+TRACK            = "#04160c"
+GLOW             = "#34d399"
 
 TICK_SECONDS = 1.0  # mise à jour 1 s (temps réel)
 
@@ -142,7 +150,14 @@ class SegmentedBar(tk.Canvas):
       - reset()
     """
     def __init__(self, master, height=22, **kwargs):
-        super().__init__(master, bg=CARD, highlightthickness=0, height=height, **kwargs)
+        super().__init__(
+            master,
+            bg=CARD,
+            highlightthickness=0,
+            bd=0,
+            height=height,
+            **kwargs,
+        )
         self.height = height
         self.total = 0.0
         self.elapsed = 0.0
@@ -163,22 +178,48 @@ class SegmentedBar(tk.Canvas):
         self.redraw()
 
     def redraw(self):
-        w = self.winfo_width() or 100
+        w = self.winfo_width() or 120
         h = self.winfo_height() or self.height
         self.delete("all")
-        # Piste
-        r = h//2
-        self.create_rectangle(0, r-8, w, r+8, fill=TRACK, outline=TRACK)
 
-        # Remplissage
+        r = h // 2
+        outer_top = max(0, r - 14)
+        outer_bot = min(h, r + 14)
+        self.create_rectangle(0, outer_top, w, outer_bot, fill=BORDER, outline=BORDER)
+
+        track_left = 4
+        track_right = max(track_left, w - 4)
+        track_top = max(outer_top + 2, r - 10)
+        track_bot = min(outer_bot - 2, r + 10)
+        self.create_rectangle(track_left, track_top, track_right, track_bot, fill=TRACK, outline=TRACK)
+
         pct = 0.0 if self.total <= 1e-9 else min(1.0, self.elapsed / self.total)
-        fill_w = int(pct * w)
-        self.create_rectangle(0, r-8, fill_w, r+8, fill=FILL, outline=FILL)
+        inner_width = max(0, track_right - track_left)
+        fill_w = int(pct * inner_width)
+        if fill_w > 0:
+            self.create_rectangle(
+                track_left,
+                track_top,
+                track_left + fill_w,
+                track_bot,
+                fill=FILL,
+                outline=FILL,
+            )
+            self.create_line(
+                track_left,
+                track_top,
+                track_left + fill_w,
+                track_top,
+                fill=GLOW,
+                width=2,
+            )
 
         # Séparateurs rouges à 1/3 et 2/3 (toujours visibles)
-        x1 = int(w/3); x2 = int(2*w/3)
-        self.create_line(x1, r-10, x1, r+10, fill=RED, width=2)
-        self.create_line(x2, r-10, x2, r+10, fill=RED, width=2)
+        if inner_width > 0:
+            x1 = track_left + inner_width / 3
+            x2 = track_left + 2 * inner_width / 3
+            self.create_line(int(x1), track_top, int(x1), track_bot, fill=RED, width=2)
+            self.create_line(int(x2), track_top, int(x2), track_bot, fill=RED, width=2)
 
 # ================== Application ==================
 class FourApp(tk.Tk):
@@ -188,6 +229,13 @@ class FourApp(tk.Tk):
         self.configure(bg=BG)
         self.geometry("1180x760")
         self.minsize(1100, 700)
+
+        self._init_styles()
+        self.option_add("*TButton.Cursor", "hand2")
+        self.option_add("*TRadiobutton.Cursor", "hand2")
+        self.option_add("*Entry.insertBackground", TEXT)
+        self.option_add("*Entry.selectBackground", ACCENT)
+        self.option_add("*Entry.selectForeground", BG)
 
         # États animation
         self.animating = False
@@ -200,91 +248,260 @@ class FourApp(tk.Tk):
         # UI
         self._build_ui()
 
+    def _init_styles(self):
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        base_font = ("Segoe UI", 11)
+
+        style.configure("TFrame", background=BG)
+        style.configure("Card.TFrame", background=CARD)
+        style.configure("CardInner.TFrame", background=CARD)
+        style.configure("TLabel", background=BG, foreground=TEXT, font=base_font)
+        style.configure("Card.TLabel", background=CARD, foreground=TEXT, font=base_font)
+        style.configure("Title.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI Semibold", 16))
+        style.configure("CardHeading.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 13))
+        style.configure("Subtle.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI", 10))
+        style.configure("Hint.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI", 10, "italic"))
+        style.configure("TableHead.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI Semibold", 11))
+        style.configure("Big.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI", 20, "bold"))
+        style.configure("Result.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI", 20, "bold"))
+        style.configure("Mono.TLabel", background=CARD, foreground=SUBTEXT, font=("Consolas", 11))
+        style.configure("Status.TLabel", background=CARD, foreground=SUBTEXT, font=("Consolas", 11))
+        style.configure("Dark.TSeparator", background=BORDER)
+        style.configure("TSeparator", background=BORDER)
+        style.configure("Footer.TLabel", background=BG, foreground=SUBTEXT, font=("Segoe UI", 10))
+
+        style.configure(
+            "Accent.TButton",
+            background=ACCENT,
+            foreground=BG,
+            padding=10,
+            borderwidth=0,
+            focusthickness=0,
+            relief="flat",
+            font=("Segoe UI", 11, "bold"),
+        )
+        style.map(
+            "Accent.TButton",
+            background=[("active", ACCENT_HOVER), ("disabled", ACCENT_DISABLED)],
+            foreground=[("disabled", "#4b5563")],
+        )
+
+        style.configure(
+            "Ghost.TButton",
+            background=SECONDARY,
+            foreground=TEXT,
+            padding=10,
+            borderwidth=0,
+            focusthickness=0,
+            relief="flat",
+            font=("Segoe UI", 11, "bold"),
+        )
+        style.map(
+            "Ghost.TButton",
+            background=[("active", SECONDARY_HOVER), ("disabled", ACCENT_DISABLED)],
+            foreground=[("disabled", "#4b5563")],
+        )
+
+        style.configure(
+            "Dark.TEntry",
+            fieldbackground=FIELD,
+            background=FIELD,
+            foreground=TEXT,
+            bordercolor=BORDER,
+            insertcolor=TEXT,
+        )
+        style.map("Dark.TEntry", fieldbackground=[("focus", FIELD_FOCUS)])
+
+        style.configure(
+            "Accent.TRadiobutton",
+            background=CARD,
+            foreground=TEXT,
+            indicatorcolor=SECONDARY,
+            focuscolor=ACCENT,
+            padding=4,
+            font=base_font,
+        )
+        style.map(
+            "Accent.TRadiobutton",
+            indicatorcolor=[("selected", ACCENT), ("!selected", SECONDARY)],
+            foreground=[("disabled", "#4b5563")],
+        )
+
+        self.style = style
+
+    def _card(self, parent, *, padding=(20, 16), **pack_kwargs):
+        wrapper = tk.Frame(
+            parent,
+            bg=BORDER,
+            highlightbackground=BORDER,
+            highlightcolor=BORDER,
+            highlightthickness=1,
+            bd=0,
+        )
+        wrapper.pack_propagate(False)
+        inner = ttk.Frame(wrapper, style="Card.TFrame", padding=padding)
+        inner.pack(fill="both", expand=True)
+        wrapper.pack(**pack_kwargs)
+        return inner
+
     def _build_ui(self):
-        # Header
-        header = ttk.Frame(self, style="TFrame"); header.pack(fill="x", padx=18, pady=(16,8))
-        ttk.Style().configure("TFrame", background=BG)
-        ttk.Style().configure("Card.TFrame", background=CARD)
-        ttk.Style().configure("TLabel", background=BG, foreground=TEXT, font=("Segoe UI", 11))
-        ttk.Style().configure("Card.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI", 11))
-        ttk.Style().configure("Header.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI Semibold", 13))
-        ttk.Style().configure("Big.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI", 20, "bold"))
-        ttk.Style().configure("Mono.TLabel", background=CARD, foreground=TEXT, font=("Consolas", 11))
-        ttk.Style().configure("TButton", font=("Segoe UI", 11, "bold"))
+        header = self._card(self, fill="x", padx=18, pady=(16, 8), padding=(24, 18))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(
+            header,
+            text="Simulation de four — 3 tapis (temps réel)",
+            style="Title.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            header,
+            text="Modèle : T = d + K1/f1 + K2/f2 + K3/f3   (f = IHM/100)",
+            style="Subtle.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
 
-        ttk.Label(header, text="Simulation de four — 3 tapis (temps réel)", style="TLabel").pack(side="left")
-        ttk.Label(header, text="Modèle : T = d + K1/f1 + K2/f2 + K3/f3   (f = IHM/100)", style="TLabel").pack(side="right")
+        top = ttk.Frame(self, style="TFrame")
+        top.pack(fill="both", expand=True, padx=18, pady=6)
 
-        top = ttk.Frame(self, style="TFrame"); top.pack(fill="x", padx=18, pady=6)
+        card_in = self._card(top, side="left", fill="both", expand=True, padx=(0, 8))
+        ttk.Label(
+            card_in,
+            text="Entrées (fréquences des variateurs)",
+            style="CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 12))
+        g = ttk.Frame(card_in, style="CardInner.TFrame")
+        g.pack(anchor="w", pady=(12, 6))
+        g.columnconfigure(1, weight=1)
+        ttk.Label(g, text="Tapis 1 : Hz =", style="Card.TLabel").grid(row=0, column=0, sticky="e", padx=(0, 12), pady=6)
+        self.e1 = ttk.Entry(g, width=12, font=("Consolas", 12), style="Dark.TEntry")
+        self.e1.grid(row=0, column=1, sticky="w", pady=6)
+        ttk.Label(g, text="Tapis 2 : Hz =", style="Card.TLabel").grid(row=1, column=0, sticky="e", padx=(0, 12), pady=6)
+        self.e2 = ttk.Entry(g, width=12, font=("Consolas", 12), style="Dark.TEntry")
+        self.e2.grid(row=1, column=1, sticky="w", pady=6)
+        ttk.Label(g, text="Tapis 3 : Hz =", style="Card.TLabel").grid(row=2, column=0, sticky="e", padx=(0, 12), pady=6)
+        self.e3 = ttk.Entry(g, width=12, font=("Consolas", 12), style="Dark.TEntry")
+        self.e3.grid(row=2, column=1, sticky="w", pady=6)
 
-        # --- Entrées
-        card_in = ttk.Frame(top, style="Card.TFrame"); card_in.pack(side="left", fill="both", expand=True, padx=(0,8))
-        ttk.Label(card_in, text="Entrées (fréquences des variateurs)", style="Header.TLabel").pack(anchor="w", padx=16, pady=(14,6))
-        g = ttk.Frame(card_in, style="Card.TFrame"); g.pack(anchor="w", padx=16, pady=8)
+        ttk.Label(
+            card_in,
+            text="Astuce : 40.00 ou 4000 (IHM). >200 = IHM/100.",
+            style="Hint.TLabel",
+        ).pack(anchor="w", pady=(4, 12))
 
-        ttk.Label(g, text="Tapis 1 : Hz =", style="Card.TLabel").grid(row=0, column=0, sticky="e", padx=(0,8), pady=6)
-        self.e1 = ttk.Entry(g, width=12, font=("Consolas", 12)); self.e1.grid(row=0, column=1, sticky="w", pady=6)
-        ttk.Label(g, text="Tapis 2 : Hz =", style="Card.TLabel").grid(row=1, column=0, sticky="e", padx=(0,8), pady=6)
-        self.e2 = ttk.Entry(g, width=12, font=("Consolas", 12)); self.e2.grid(row=1, column=1, sticky="w", pady=6)
-        ttk.Label(g, text="Tapis 3 : Hz =", style="Card.TLabel").grid(row=2, column=0, sticky="e", padx=(0,8), pady=6)
-        self.e3 = ttk.Entry(g, width=12, font=("Consolas", 12)); self.e3.grid(row=2, column=1, sticky="w", pady=6)
-        ttk.Label(card_in, text="Astuce : 40.00 ou 4000 (IHM). >200 = IHM/100.", style="Card.TLabel").pack(anchor="w", padx=16, pady=(2,8))
+        mode_row = ttk.Frame(card_in, style="CardInner.TFrame")
+        mode_row.pack(anchor="w", pady=(0, 14))
+        ttk.Label(mode_row, text="Calibration :", style="Card.TLabel").grid(row=0, column=0, padx=(0, 12))
+        ttk.Radiobutton(
+            mode_row,
+            text="Ancrage‑4 (colle au tableur)",
+            variable=self.mode,
+            value="anchor",
+            style="Accent.TRadiobutton",
+        ).grid(row=0, column=1, padx=(0, 18))
+        ttk.Radiobutton(
+            mode_row,
+            text="Régression globale (LS)",
+            variable=self.mode,
+            value="reg",
+            style="Accent.TRadiobutton",
+        ).grid(row=0, column=2)
 
-        # Mode de calcul
-        mode_row = ttk.Frame(card_in, style="Card.TFrame"); mode_row.pack(anchor="w", padx=16, pady=(0,10))
-        ttk.Label(mode_row, text="Calibration :", style="Card.TLabel").grid(row=0, column=0, padx=(0,8))
-        ttk.Radiobutton(mode_row, text="Ancrage‑4 (colle au tableur)", variable=self.mode, value="anchor").grid(row=0, column=1, padx=(0,12))
-        ttk.Radiobutton(mode_row, text="Régression globale (LS)", variable=self.mode, value="reg").grid(row=0, column=2)
+        btns = ttk.Frame(card_in, style="CardInner.TFrame")
+        btns.pack(anchor="w", pady=(4, 4))
+        ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton").grid(row=0, column=0, padx=(0, 12), pady=2)
+        self.btn_start = ttk.Button(
+            btns,
+            text="Démarrer (temps réel)",
+            command=self.on_start,
+            state="disabled",
+            style="Accent.TButton",
+        )
+        self.btn_start.grid(row=0, column=1, padx=(0, 12), pady=2)
+        self.btn_pause = ttk.Button(
+            btns,
+            text="Pause",
+            command=self.on_pause,
+            state="disabled",
+            style="Ghost.TButton",
+        )
+        self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2)
+        ttk.Button(btns, text="Reset", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2)
 
-        # Boutons
-        btns = ttk.Frame(card_in, style="Card.TFrame"); btns.pack(anchor="w", padx=16, pady=(0,14))
-        ttk.Button(btns, text="Calculer", command=self.on_calculer).grid(row=0, column=0, padx=(0,10))
-        self.btn_start = ttk.Button(btns, text="Démarrer (temps réel)", command=self.on_start, state="disabled"); self.btn_start.grid(row=0, column=1, padx=(0,10))
-        self.btn_pause = ttk.Button(btns, text="Pause", command=self.on_pause, state="disabled"); self.btn_pause.grid(row=0, column=2, padx=(0,10))
-        ttk.Button(btns, text="Reset", command=self.on_reset).grid(row=0, column=3)
-
-        # --- Résultats
-        card_out = ttk.Frame(top, style="Card.TFrame"); card_out.pack(side="left", fill="both", expand=True, padx=(8,0))
-        ttk.Label(card_out, text="Résultats", style="Header.TLabel").pack(anchor="w", padx=16, pady=(14,6))
-        table = ttk.Frame(card_out, style="Card.TFrame"); table.pack(anchor="w", padx=16, pady=(6,2))
-        ttk.Label(table, text="Tapis", style="Card.TLabel").grid(row=0, column=0, padx=6, pady=4)
-        ttk.Label(table, text="f (Hz)", style="Card.TLabel").grid(row=0, column=1, padx=6, pady=4)
-        ttk.Label(table, text="t_i (convoyage pur)", style="Card.TLabel").grid(row=0, column=2, padx=6, pady=4)
+        card_out = self._card(top, side="left", fill="both", expand=True, padx=(8, 0))
+        ttk.Label(card_out, text="Résultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
+        table = ttk.Frame(card_out, style="CardInner.TFrame")
+        table.pack(anchor="w", pady=(12, 8))
+        ttk.Label(table, text="Tapis", style="TableHead.TLabel").grid(row=0, column=0, padx=6, pady=4)
+        ttk.Label(table, text="f (Hz)", style="TableHead.TLabel").grid(row=0, column=1, padx=6, pady=4)
+        ttk.Label(table, text="t_i (convoyage pur)", style="TableHead.TLabel").grid(row=0, column=2, padx=6, pady=4)
 
         self.row_labels = []
         for i in range(3):
-            r = i+1
+            r = i + 1
             ttk.Label(table, text=f"{i+1}", style="Card.TLabel").grid(row=r, column=0, padx=6, pady=6, sticky="e")
-            lf = ttk.Label(table, text="—", style="Card.TLabel"); lf.grid(row=r, column=1, padx=6, pady=6, sticky="w")
-            lt = ttk.Label(table, text="—", style="Card.TLabel"); lt.grid(row=r, column=2, padx=6, pady=6, sticky="w")
+            lf = ttk.Label(table, text="—", style="Status.TLabel")
+            lf.grid(row=r, column=1, padx=6, pady=6, sticky="w")
+            lt = ttk.Label(table, text="—", style="Status.TLabel")
+            lt.grid(row=r, column=2, padx=6, pady=6, sticky="w")
             self.row_labels.append((lf, lt))
 
-        ttk.Separator(card_out).pack(fill="x", padx=16, pady=6)
-        self.lbl_total_big = ttk.Label(card_out, text="Temps total (modèle) : —", style="Big.TLabel")
-        self.lbl_total_big.pack(anchor="w", padx=16, pady=2)
+        ttk.Separator(card_out, style="Dark.TSeparator").pack(fill="x", pady=8)
+        self.lbl_total_big = ttk.Label(card_out, text="Temps total (modèle) : —", style="Result.TLabel")
+        self.lbl_total_big.pack(anchor="w", pady=(0, 6))
+        self.lbl_model = ttk.Label(card_out, text="", style="Hint.TLabel")
+        self.lbl_model.pack(anchor="w", pady=(0, 8))
 
-        # Affiche les paramètres (info)
-        ttk.Separator(card_out).pack(fill="x", padx=16, pady=6)
-        params_txt = (f"[Ancrage‑4] d={D_A:+.3f}  K1={K1_A:.3f}  K2={K2_A:.3f}  K3={K3_A:.3f} (min·Hz)\n"
-                      f"[Régression] d={D_R:+.3f}  K1={K1_R:.3f}  K2={K2_R:.3f}  K3={K3_R:.3f}  (MAE≈{METRICS_REG['MAE']:.2f} min ; RMSE≈{METRICS_REG['RMSE']:.2f} min ; R²≈{METRICS_REG['R2']:.3f})")
-        ttk.Label(card_out, text=params_txt, style="Mono.TLabel").pack(anchor="w", padx=16, pady=(0,8))
+        ttk.Separator(card_out, style="Dark.TSeparator").pack(fill="x", pady=8)
+        params_txt = (
+            f"[Ancrage‑4] d={D_A:+.3f}  K1={K1_A:.3f}  K2={K2_A:.3f}  K3={K3_A:.3f} (min·Hz)\n"
+            f"[Régression] d={D_R:+.3f}  K1={K1_R:.3f}  K2={K2_R:.3f}  K3={K3_R:.3f}  "
+            f"(MAE≈{METRICS_REG['MAE']:.2f} min ; RMSE≈{METRICS_REG['RMSE']:.2f} min ; R²≈{METRICS_REG['R2']:.3f})"
+        )
+        ttk.Label(card_out, text=params_txt, style="Mono.TLabel").pack(anchor="w")
 
-        # --- Barres segmentées
-        pcard = ttk.Frame(self, style="Card.TFrame"); pcard.pack(fill="x", padx=18, pady=8)
-        ttk.Label(pcard, text="Barres de chargement (temps réel, 3 cellules)", style="Header.TLabel").pack(anchor="w", padx=16, pady=(14,10))
+        pcard = self._card(self, fill="x", padx=18, pady=8, padding=(20, 16))
+        ttk.Label(
+            pcard,
+            text="Barres de chargement (temps réel, 3 cellules)",
+            style="CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 12))
 
         self.bars = []
         self.bar_texts = []
         for i in range(3):
-            row = ttk.Frame(pcard, style="Card.TFrame")
-            row.pack(fill="x", padx=16, pady=6)
+            row = ttk.Frame(pcard, style="CardInner.TFrame")
+            row.pack(fill="x", pady=8)
             row.columnconfigure(1, weight=1)
-            ttk.Label(row, text=f"Tapis {i+1}", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0,10))
-            bar = SegmentedBar(row, height=24)
+            ttk.Label(row, text=f"Tapis {i+1}", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+            bar = SegmentedBar(row, height=28)
             bar.grid(row=0, column=1, sticky="ew")
-            txt = ttk.Label(row, text="—", style="Card.TLabel")
-            txt.grid(row=0, column=2, sticky="e", padx=(10,0))
-            self.bars.append(bar); self.bar_texts.append(txt)
+            txt = ttk.Label(row, text="—", style="Status.TLabel")
+            txt.grid(row=0, column=2, sticky="e", padx=(12, 0))
+            self.bars.append(bar)
+            self.bar_texts.append(txt)
+
+        footer = ttk.Frame(self, style="TFrame")
+        footer.pack(fill="x", padx=18, pady=(0, 16))
+        ttk.Label(
+            footer,
+            text="Astuce : lance un calcul pour activer la simulation en temps réel.",
+            style="Footer.TLabel",
+        ).pack(anchor="w")
+
+        self.mode.trace_add("write", lambda *_: self._update_model_label())
+        self._update_model_label()
+
+    def _update_model_label(self):
+        mode = self.mode.get()
+        if mode == "anchor":
+            text = "Modèle utilisé : Ancrage‑4 — calibrage verrouillé sur les repères A/B/C/D."
+        else:
+            text = "Modèle utilisé : Régression globale — moindres carrés sur les 12 expériences."
+        if hasattr(self, "lbl_model"):
+            self.lbl_model.config(text=text)
 
     # ---------- Actions ----------
     def on_reset(self):
@@ -297,7 +514,9 @@ class FourApp(tk.Tk):
         for lf, lt in self.row_labels:
             lf.config(text="—"); lt.config(text="—")
         self.lbl_total_big.config(text="Temps total (modèle) : —")
-        self.btn_start.config(state="disabled"); self.btn_pause.config(state="disabled")
+        self.btn_start.config(state="disabled")
+        self.btn_pause.config(state="disabled", text="Pause")
+        self._update_model_label()
 
     def on_calculer(self):
         try:
