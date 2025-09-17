@@ -139,6 +139,44 @@ GLOW             = "#86efac"
 
 TICK_SECONDS = 1.0  # mise à jour 1 s (temps réel)
 
+# ================== Conteneur scrollable vertical ==================
+class VScrollFrame(ttk.Frame):
+    """Cadre scrollable vertical pour empiler des cartes sans rien couper."""
+
+    def __init__(self, master, **kwargs):
+        super().__init__(master, **kwargs)
+        self.canvas = tk.Canvas(self, highlightthickness=0, bg=BG, bd=0)
+        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.vsb.set)
+        self.vsb.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        self.inner = ttk.Frame(self.canvas, style="TFrame")
+        self._inner_id = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+
+        # Ajuste la largeur du contenu à celle du canvas et met à jour la scrollregion
+        self.inner.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        # Molette (Windows/macOS) et boutons 4/5 (Linux)
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+        self.canvas.bind_all("<Button-4>", self._on_mousewheel, add="+")
+        self.canvas.bind_all("<Button-5>", self._on_mousewheel, add="+")
+
+    def _on_frame_configure(self, event=None):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        # Force la largeur du cadre intérieur = largeur visible du canvas
+        self.canvas.itemconfigure(self._inner_id, width=event.width)
+
+    def _on_mousewheel(self, event):
+        # Normalise le défilement
+        if getattr(event, "delta", 0) > 0 or getattr(event, "num", None) == 4:
+            self.canvas.yview_scroll(-1, "units")
+        elif getattr(event, "delta", 0) < 0 or getattr(event, "num", None) == 5:
+            self.canvas.yview_scroll(+1, "units")
+
 # ================== Barre Canvas segmentée ==================
 class SegmentedBar(tk.Canvas):
     """
@@ -233,7 +271,8 @@ class FourApp(tk.Tk):
         super().__init__()
         self.title("Four • 3 Tapis — Calcul & Barres (Temps réel)")
         self.configure(bg=BG)
-        self.geometry("1180x760")
+        # Tu peux garder la géométrie initiale si tu veux
+        # self.geometry("1180x760")
         self.minsize(1100, 700)
 
         self._init_styles()
@@ -266,6 +305,17 @@ class FourApp(tk.Tk):
 
         # UI
         self._build_ui()
+
+        # Ajuste la taille à ce que l'écran peut afficher, sans couper
+        self.after(0, self._fit_to_screen)
+
+    def _fit_to_screen(self, margin=60):
+        self.update_idletasks()
+        req_w, req_h = self.winfo_reqwidth(), self.winfo_reqheight()
+        scr_w, scr_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        w = min(max(req_w, 1100), scr_w - 2 * margin)
+        h = min(max(req_h, 700), scr_h - 2 * margin)
+        self.geometry(f"{int(w)}x{int(h)}")
 
     def _cancel_after(self):
         if getattr(self, "_after_id", None):
@@ -544,8 +594,11 @@ class FourApp(tk.Tk):
             detail.pack(anchor="w", pady=(2, 0))
             self.kpi_labels[key] = (value, detail)
 
-        top = ttk.Frame(self, style="TFrame")
-        top.pack(fill="both", expand=True, padx=18, pady=6)
+        body = VScrollFrame(self)
+        body.pack(fill="both", expand=True)
+
+        top = ttk.Frame(body.inner, style="TFrame")
+        top.pack(fill="x", expand=False, padx=18, pady=6)
 
         card_in = self._card(top, side="left", fill="both", expand=True, padx=(0, 8))
         card_in.columnconfigure(0, weight=1)
@@ -668,7 +721,7 @@ class FourApp(tk.Tk):
             ttk.Label(row, text=name, style="ParamName.TLabel").pack(side="left")
             ttk.Label(row, text=value, style="ParamValue.TLabel").pack(side="left", padx=(12, 0))
 
-        pcard = self._card(self, fill="x", expand=True, padx=18, pady=8, padding=(24, 20))
+        pcard = self._card(body.inner, fill="x", expand=False, padx=18, pady=8, padding=(24, 20))
         ttk.Label(
             pcard,
             text="Barres de chargement (temps reel, 3 cellules)",
@@ -697,7 +750,7 @@ class FourApp(tk.Tk):
             self.bars.append(bar)
             self.bar_texts.append(txt)
 
-        footer = ttk.Frame(self, style="TFrame")
+        footer = ttk.Frame(body.inner, style="TFrame")
         footer.pack(fill="x", padx=18, pady=(0, 16))
         ttk.Label(
             footer,
