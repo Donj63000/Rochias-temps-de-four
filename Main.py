@@ -2,7 +2,7 @@
 # Four 3 tapis — TEMPS RÉEL + barres segmentées (3 cellules) + calibrage Ancrage‑4
 # Auteur : ChatGPT (pour Val) — 2025
 
-import math, time, tkinter as tk
+import math, os, time, tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter import scrolledtext, filedialog  # pour la fenêtre Explications
 
@@ -331,6 +331,10 @@ class FourApp(tk.Tk):
         self.kpi_labels = {}
         self.stage_rows = []
 
+        self.logo_img = None
+
+        self._load_logo()
+
         # UI
         self._build_ui()
 
@@ -404,6 +408,8 @@ class FourApp(tk.Tk):
         style.configure("HeroStatValue.TLabel", background="#ecfdf5", foreground=ACCENT, font=("Segoe UI", 22, "bold"))
         style.configure("HeroStatLabel.TLabel", background="#ecfdf5", foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
         style.configure("HeroStatDetail.TLabel", background="#ecfdf5", foreground=SUBTEXT, font=("Segoe UI", 10))
+
+        style.configure("Logo.TLabel", background=CARD)
 
         style.configure("StageRow.TFrame", background=CARD)
         style.configure("StageTitle.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI Semibold", 12))
@@ -500,6 +506,35 @@ class FourApp(tk.Tk):
         self.style = style
 
 
+    def _load_logo(self):
+        path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "rochias.png")
+        if not os.path.exists(path):
+            return
+
+        try:
+            img = tk.PhotoImage(file=path)
+        except tk.TclError:
+            return
+
+        max_height = 72
+        max_width = 260
+
+        height = img.height()
+        width = img.width()
+
+        if height > max_height:
+            factor = max(1, int(math.ceil(height / max_height)))
+            img = img.subsample(factor, factor)
+            height = img.height()
+            width = img.width()
+
+        if width > max_width:
+            factor = max(1, int(math.ceil(width / max_width)))
+            img = img.subsample(factor, factor)
+
+        self.logo_img = img
+
+
     def _card(self, parent, *, padding=(20, 16), **pack_kwargs):
         wrapper = tk.Frame(
             parent,
@@ -580,16 +615,28 @@ class FourApp(tk.Tk):
         header = self._card(self, fill="x", padx=18, pady=(16, 8), padding=(28, 22))
         header.columnconfigure(0, weight=1)
 
+        accent = tk.Frame(header, background=ACCENT, height=4)
+        accent.grid(row=0, column=0, sticky="ew", pady=(0, 16))
+        header.grid_rowconfigure(0, weight=0)
+        header.grid_rowconfigure(1, weight=1)
+
         hero = ttk.Frame(header, style="Card.TFrame")
-        hero.grid(row=0, column=0, sticky="ew")
-        hero.columnconfigure(0, weight=1)
-        hero.columnconfigure(1, weight=0)
+        hero.grid(row=1, column=0, sticky="ew")
+        hero.columnconfigure(0, weight=0)
+        hero.columnconfigure(1, weight=1)
+        hero.columnconfigure(2, weight=0)
+        hero.grid_rowconfigure(3, weight=1)
+
+        if self.logo_img is not None:
+            ttk.Label(hero, image=self.logo_img, style="Logo.TLabel").grid(
+                row=0, column=0, rowspan=2, sticky="nw", padx=(0, 20)
+            )
 
         title = ttk.Label(hero, text="Simulation four 3 tapis (temps reel)", style="HeroTitle.TLabel")
-        title.grid(row=0, column=0, sticky="w")
+        title.grid(row=0, column=1, sticky="w")
 
         badge_box = ttk.Frame(hero, style="CardInner.TFrame")
-        badge_box.grid(row=0, column=1, sticky="e", padx=(12, 0))
+        badge_box.grid(row=0, column=2, sticky="e", padx=(12, 0))
         ttk.Label(badge_box, text="Mode temps reel", style="BadgeReady.TLabel").pack(side="left", padx=(0, 8))
         ttk.Label(badge_box, text="Interpolation 12 points", style="BadgeNeutral.TLabel").pack(side="left")
 
@@ -600,10 +647,19 @@ class FourApp(tk.Tk):
             wraplength=760,
             justify="left",
         )
-        subtitle.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        subtitle.grid(row=1, column=1, columnspan=2, sticky="w", pady=(8, 0))
+
+        tagline = ttk.Label(
+            hero,
+            text="Tableau de bord visuel pour suivre la cuisson et les tapis en parallele.",
+            style="Subtle.TLabel",
+            wraplength=760,
+            justify="left",
+        )
+        tagline.grid(row=2, column=1, columnspan=2, sticky="w", pady=(6, 0))
 
         hero_stats = ttk.Frame(hero, style="CardInner.TFrame")
-        hero_stats.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        hero_stats.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(18, 0))
         hero_stats.columnconfigure((0, 1, 2, 3), weight=1, uniform="hero")
 
         kpi_defs = [
