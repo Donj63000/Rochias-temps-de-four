@@ -83,6 +83,13 @@ D_R, K1_R, K2_R, K3_R = PARAMS_REG
 # --- Calibrage : theta_12 (exact sur la base de 12 points)
 THETA12, METRICS_EXACT = calibrate_interp12(EXPS)  # MAE ~ 1e-12 ici
 
+PRESET_VALUES = [
+    ("Ancre A", ("9000", "9000", "9000")),
+    ("Tapis 1 lent", ("5000", "9000", "9000")),
+    ("Tapis 3 lent", ("9000", "9000", "5000")),
+    ("Equilibre", ("6500", "7200", "7800")),
+]
+
 # ================== Utilitaires ==================
 def parse_hz(s: str) -> float:
     """Accepte 40.00 (Hz) ou 4000 (IHM). >200 => IHM/100."""
@@ -186,7 +193,7 @@ class SegmentedBar(tk.Canvas):
         track_right = max(track_left, w - 4)
         track_top = max(outer_top + 2, r - 10)
         track_bot = min(outer_bot - 2, r + 10)
-        self.create_rectangle(track_left, track_top, track_right, track_bot, fill=TRACK, outline=TRACK)
+        self.create_rectangle(track_left, track_top, track_right, track_bot, fill=TRACK, outline=ACCENT, width=1)
 
         pct = 0.0 if self.total <= 1e-9 else min(1.0, self.elapsed / self.total)
         inner_width = max(0, track_right - track_left)
@@ -252,6 +259,11 @@ class FourApp(tk.Tk):
         self.notified_stage2 = False
         self.notified_exit = False
 
+        self.stat_cards = {}
+        self.stage_status = []
+        self.kpi_labels = {}
+        self.stage_rows = []
+
         # UI
         self._build_ui()
 
@@ -279,20 +291,47 @@ class FourApp(tk.Tk):
         style.configure("TFrame", background=BG)
         style.configure("Card.TFrame", background=CARD)
         style.configure("CardInner.TFrame", background=CARD)
+
         style.configure("TLabel", background=BG, foreground=TEXT, font=base_font)
         style.configure("Card.TLabel", background=CARD, foreground=TEXT, font=base_font)
-        style.configure("Title.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 16))
-        style.configure("CardHeading.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 13))
+        style.configure("Title.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 17))
+        style.configure("HeroTitle.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 18))
+        style.configure("HeroSub.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI", 11))
+        style.configure("CardHeading.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 14))
         style.configure("Subtle.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI", 10))
         style.configure("Hint.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI", 10, "italic"))
         style.configure("TableHead.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI Semibold", 11))
         style.configure("Big.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI", 20, "bold"))
-        style.configure("Result.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI", 20, "bold"))
+        style.configure("Result.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI", 22, "bold"))
         style.configure("Mono.TLabel", background=CARD, foreground="#3b7e63", font=("Consolas", 11))
         style.configure("Status.TLabel", background=CARD, foreground=SUBTEXT, font=("Consolas", 11))
+        style.configure("Footer.TLabel", background=BG, foreground=SUBTEXT, font=("Segoe UI", 10))
+
         style.configure("Dark.TSeparator", background=BORDER)
         style.configure("TSeparator", background=BORDER)
-        style.configure("Footer.TLabel", background=BG, foreground=SUBTEXT, font=("Segoe UI", 10))
+
+        style.configure("StatCard.TFrame", background=SECONDARY, relief="flat")
+        style.configure("StatCardAccent.TFrame", background="#bbf7d0", relief="flat")
+        style.configure("StatTitle.TLabel", background=SECONDARY, foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
+        style.configure("StatTitleAccent.TLabel", background="#bbf7d0", foreground="#065f46", font=("Segoe UI Semibold", 10))
+        style.configure("StatValue.TLabel", background=SECONDARY, foreground=TEXT, font=("Segoe UI", 18, "bold"))
+        style.configure("StatValueAccent.TLabel", background="#bbf7d0", foreground="#064e3b", font=("Segoe UI", 20, "bold"))
+        style.configure("StatDetail.TLabel", background=SECONDARY, foreground=SUBTEXT, font=("Consolas", 11))
+        style.configure("StatDetailAccent.TLabel", background="#bbf7d0", foreground="#065f46", font=("Consolas", 11))
+
+        style.configure("ParamName.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
+        style.configure("ParamValue.TLabel", background=CARD, foreground=TEXT, font=("Consolas", 11))
+
+        style.configure("HeroStat.TFrame", background="#ecfdf5", relief="flat")
+        style.configure("HeroStatValue.TLabel", background="#ecfdf5", foreground=ACCENT, font=("Segoe UI", 22, "bold"))
+        style.configure("HeroStatLabel.TLabel", background="#ecfdf5", foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
+        style.configure("HeroStatDetail.TLabel", background="#ecfdf5", foreground=SUBTEXT, font=("Segoe UI", 10))
+
+        style.configure("StageRow.TFrame", background=CARD)
+        style.configure("StageTitle.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI Semibold", 12))
+        style.configure("StageFreq.TLabel", background=CARD, foreground=SUBTEXT, font=("Consolas", 11))
+        style.configure("StageTime.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 18))
+        style.configure("StageTimeDetail.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI", 10))
 
         style.configure(
             "Accent.TButton",
@@ -327,6 +366,22 @@ class FourApp(tk.Tk):
         )
 
         style.configure(
+            "Chip.TButton",
+            background="#f0fdf4",
+            foreground=ACCENT,
+            padding=(12, 6),
+            borderwidth=0,
+            focusthickness=0,
+            relief="flat",
+            font=("Segoe UI Semibold", 10),
+        )
+        style.map(
+            "Chip.TButton",
+            background=[("active", "#dcfce7"), ("disabled", "#f0f1ef")],
+            foreground=[("disabled", "#7c8f82")],
+        )
+
+        style.configure(
             "Dark.TEntry",
             fieldbackground=FIELD,
             background=FIELD,
@@ -356,7 +411,16 @@ class FourApp(tk.Tk):
             foreground=[("disabled", "#7c8f82")],
         )
 
+        badge_font = ("Segoe UI Semibold", 10)
+        style.configure("BadgeIdle.TLabel", background=SECONDARY, foreground=SUBTEXT, font=badge_font, padding=(10, 2))
+        style.configure("BadgeReady.TLabel", background="#bbf7d0", foreground=ACCENT, font=badge_font, padding=(10, 2))
+        style.configure("BadgeActive.TLabel", background=ACCENT, foreground="#ffffff", font=badge_font, padding=(10, 2))
+        style.configure("BadgeDone.TLabel", background=ACCENT_HOVER, foreground="#ffffff", font=badge_font, padding=(10, 2))
+        style.configure("BadgePause.TLabel", background=ACCENT_DISABLED, foreground=TEXT, font=badge_font, padding=(10, 2))
+        style.configure("BadgeNeutral.TLabel", background="#d1eddb", foreground=TEXT, font=badge_font, padding=(10, 2))
+
         self.style = style
+
 
     def _card(self, parent, *, padding=(20, 16), **pack_kwargs):
         wrapper = tk.Frame(
@@ -372,31 +436,123 @@ class FourApp(tk.Tk):
         wrapper.pack(**pack_kwargs)
         return inner
 
+    def _create_stat_card(self, parent, column, title, *, frame_style="StatCard.TFrame", title_style="StatTitle.TLabel", value_style="StatValue.TLabel", detail_style="StatDetail.TLabel"):
+        frame = ttk.Frame(parent, style=frame_style, padding=(16, 12))
+        frame.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 12, 0))
+        ttk.Label(frame, text=title, style=title_style).pack(anchor="w")
+        value = ttk.Label(frame, text="--", style=value_style)
+        value.pack(anchor="w", pady=(4, 2))
+        detail = ttk.Label(frame, text="--", style=detail_style)
+        detail.pack(anchor="w")
+        parent.columnconfigure(column, weight=1, uniform="stat")
+        return value, detail
+
+    def _update_stat_card(self, key, main_text, detail_text="--"):
+        labels = self.stat_cards.get(key)
+        if not labels:
+            return
+        value_lbl, detail_lbl = labels
+        value_lbl.config(text=main_text)
+        detail_lbl.config(text=detail_text)
+
+    def _reset_stat_cards(self):
+        for value_lbl, detail_lbl in self.stat_cards.values():
+            value_lbl.config(text="--")
+            detail_lbl.config(text="--")
+
+    def _apply_preset(self, values):
+        self.on_reset()
+        entries = (self.e1, self.e2, self.e3)
+        for entry, val in zip(entries, values):
+            entry.delete(0, tk.END)
+            entry.insert(0, val)
+
+    def _reset_stage_statuses(self):
+        for idx in range(len(self.stage_status)):
+            self._set_stage_status(idx, "idle")
+
+    def _set_stage_status(self, index, status):
+        if not (0 <= index < len(self.stage_status)):
+            return
+        label = self.stage_status[index]
+        mapping = {
+            "idle": ("En attente", "BadgeIdle.TLabel"),
+            "ready": ("Pret", "BadgeReady.TLabel"),
+            "active": ("En cours", "BadgeActive.TLabel"),
+            "done": ("Termine", "BadgeDone.TLabel"),
+            "pause": ("En pause", "BadgePause.TLabel"),
+        }
+        text_value, style_name = mapping.get(status, ("En attente", "BadgeIdle.TLabel"))
+        label.config(text=text_value, style=style_name)
+
+    def _update_kpi(self, key, main_text, detail_text="--"):
+        labels = self.kpi_labels.get(key)
+        if not labels:
+            return
+        value_lbl, detail_lbl = labels
+        value_lbl.config(text=main_text)
+        detail_lbl.config(text=detail_text)
+
+    def _reset_kpis(self):
+        for value_lbl, detail_lbl in self.kpi_labels.values():
+            value_lbl.config(text="--")
+            detail_lbl.config(text="--")
+
     def _build_ui(self):
-        header = self._card(self, fill="x", padx=18, pady=(16, 8), padding=(24, 18))
+        header = self._card(self, fill="x", padx=18, pady=(16, 8), padding=(28, 22))
         header.columnconfigure(0, weight=1)
-        ttk.Label(
-            header,
-            text="Simulation de four — 3 tapis (temps réel)",
-            style="Title.TLabel",
-        ).grid(row=0, column=0, sticky="w")
-        ttk.Label(
-            header,
-            text="Modèle : T = d + K1/f1 + K2/f2 + K3/f3   (f = IHM/100) — Régression globale (LS) pour la répartition par tapis ; T calé par interpolation exacte (12 points).",
-            style="Subtle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        hero = ttk.Frame(header, style="Card.TFrame")
+        hero.grid(row=0, column=0, sticky="ew")
+        hero.columnconfigure(0, weight=1)
+        hero.columnconfigure(1, weight=0)
+
+        title = ttk.Label(hero, text="Simulation four 3 tapis (temps reel)", style="HeroTitle.TLabel")
+        title.grid(row=0, column=0, sticky="w")
+
+        badge_box = ttk.Frame(hero, style="CardInner.TFrame")
+        badge_box.grid(row=0, column=1, sticky="e", padx=(12, 0))
+        ttk.Label(badge_box, text="Mode temps reel", style="BadgeReady.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Label(badge_box, text="Interpolation 12 points", style="BadgeNeutral.TLabel").pack(side="left")
+
+        subtitle = ttk.Label(
+            hero,
+            text="Modele : T = d + K1/f1 + K2/f2 + K3/f3  (f = IHM/100). LS pour la repartition par tapis, interpolation exacte (12 essais) pour le temps total.",
+            style="HeroSub.TLabel",
+            wraplength=760,
+            justify="left",
+        )
+        subtitle.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        hero_stats = ttk.Frame(hero, style="CardInner.TFrame")
+        hero_stats.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        hero_stats.columnconfigure((0, 1, 2, 3), weight=1, uniform="hero")
+
+        kpi_defs = [
+            ("total", "Temps total"),
+            ("t1", "Tapis 1"),
+            ("t2", "Tapis 2"),
+            ("t3", "Tapis 3"),
+        ]
+        for idx, (key, label) in enumerate(kpi_defs):
+            pill = ttk.Frame(hero_stats, style="HeroStat.TFrame", padding=(16, 12))
+            pill.grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 12, 0))
+            ttk.Label(pill, text=label, style="HeroStatLabel.TLabel").pack(anchor="w")
+            value = ttk.Label(pill, text="--", style="HeroStatValue.TLabel")
+            value.pack(anchor="w", pady=(4, 0))
+            detail = ttk.Label(pill, text="--", style="HeroStatDetail.TLabel")
+            detail.pack(anchor="w", pady=(2, 0))
+            self.kpi_labels[key] = (value, detail)
 
         top = ttk.Frame(self, style="TFrame")
         top.pack(fill="both", expand=True, padx=18, pady=6)
 
         card_in = self._card(top, side="left", fill="both", expand=True, padx=(0, 8))
-        ttk.Label(
-            card_in,
-            text="Entrées (fréquences des variateurs)",
-            style="CardHeading.TLabel",
-        ).pack(anchor="w", pady=(0, 12))
+        card_in.columnconfigure(0, weight=1)
+
+        ttk.Label(card_in, text="Entrees (frequences variateur)", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
         g = ttk.Frame(card_in, style="CardInner.TFrame")
-        g.pack(anchor="w", pady=(12, 6))
+        g.pack(fill="x", pady=(12, 6))
         g.columnconfigure(1, weight=1)
         ttk.Label(g, text="Tapis 1 : Hz =", style="Card.TLabel").grid(row=0, column=0, sticky="e", padx=(0, 12), pady=6)
         self.e1 = ttk.Entry(g, width=12, font=("Consolas", 12), style="Dark.TEntry")
@@ -415,16 +571,17 @@ class FourApp(tk.Tk):
         ).pack(anchor="w", pady=(4, 12))
 
         btns = ttk.Frame(card_in, style="CardInner.TFrame")
-        btns.pack(anchor="w", pady=(4, 4))
-        ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton").grid(row=0, column=0, padx=(0, 12), pady=2)
+        btns.pack(fill="x", pady=(4, 8))
+        btns.columnconfigure(4, weight=1)
+        ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton").grid(row=0, column=0, padx=(0, 12), pady=2, sticky="w")
         self.btn_start = ttk.Button(
             btns,
-            text="Démarrer (temps réel)",
+            text="Demarrer (temps reel)",
             command=self.on_start,
             state="disabled",
             style="Accent.TButton",
         )
-        self.btn_start.grid(row=0, column=1, padx=(0, 12), pady=2)
+        self.btn_start.grid(row=0, column=1, padx=(0, 12), pady=2, sticky="w")
         self.btn_pause = ttk.Button(
             btns,
             text="Pause",
@@ -432,59 +589,111 @@ class FourApp(tk.Tk):
             state="disabled",
             style="Ghost.TButton",
         )
-        self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2)
-        ttk.Button(btns, text="Reset", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2)
-        ttk.Button(btns, text="Explications", command=self.on_explanations, style="Ghost.TButton")\
-           .grid(row=0, column=4, padx=(12, 0), pady=2)
+        self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2, sticky="w")
+        ttk.Button(btns, text="Reset", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2, sticky="w")
+        ttk.Button(btns, text="Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
+
+        ttk.Separator(card_in, style="Dark.TSeparator").pack(fill="x", pady=(12, 10))
+        presets = ttk.Frame(card_in, style="CardInner.TFrame")
+        presets.pack(fill="x", pady=(0, 8))
+        ttk.Label(presets, text="Valeurs rapides", style="Subtle.TLabel").pack(anchor="w")
+        chips = ttk.Frame(presets, style="CardInner.TFrame")
+        chips.pack(anchor="w", pady=(6, 0))
+        for name, values in PRESET_VALUES:
+            ttk.Button(chips, text=name, style="Chip.TButton", command=lambda v=values: self._apply_preset(v)).pack(side="left", padx=(0, 8), pady=2)
 
         card_out = self._card(top, side="left", fill="both", expand=True, padx=(8, 0))
-        ttk.Label(card_out, text="Résultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
-        table = ttk.Frame(card_out, style="CardInner.TFrame")
-        table.pack(anchor="w", pady=(12, 8))
-        ttk.Label(table, text="Tapis", style="TableHead.TLabel").grid(row=0, column=0, padx=6, pady=4)
-        ttk.Label(table, text="f (Hz)", style="TableHead.TLabel").grid(row=0, column=1, padx=6, pady=4)
-        ttk.Label(table, text="t_i* (temps sur tapis)", style="TableHead.TLabel").grid(row=0, column=2, padx=6, pady=4)
+        card_out.columnconfigure(0, weight=1)
+        ttk.Label(card_out, text="Resultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
+        self.lbl_total_big = ttk.Label(card_out, text="Temps total (interp. exacte) : --", style="Result.TLabel")
+        self.lbl_total_big.pack(anchor="w", pady=(0, 10))
 
-        self.row_labels = []
+        stage_list = ttk.Frame(card_out, style="CardInner.TFrame")
+        stage_list.pack(fill="x", pady=(0, 12))
+        self.stage_rows = []
         for i in range(3):
-            r = i + 1
-            ttk.Label(table, text=f"{i+1}", style="Card.TLabel").grid(row=r, column=0, padx=6, pady=6, sticky="e")
-            lf = ttk.Label(table, text="—", style="Status.TLabel")
-            lf.grid(row=r, column=1, padx=6, pady=6, sticky="w")
-            lt = ttk.Label(table, text="—", style="Status.TLabel")
-            lt.grid(row=r, column=2, padx=6, pady=6, sticky="w")
-            self.row_labels.append((lf, lt))
+            row = ttk.Frame(stage_list, style="StageRow.TFrame")
+            row.pack(fill="x", pady=6)
+            row.columnconfigure(2, weight=1)
+            ttk.Label(row, text=f"Tapis {i+1}", style="StageTitle.TLabel").grid(row=0, column=0, rowspan=2, sticky="w")
+            freq_lbl = ttk.Label(row, text="-- Hz", style="StageFreq.TLabel")
+            freq_lbl.grid(row=0, column=1, sticky="w", padx=(12, 0))
+            time_lbl = ttk.Label(row, text="--", style="StageTime.TLabel")
+            time_lbl.grid(row=0, column=2, sticky="e")
+            detail_lbl = ttk.Label(row, text="--", style="StageTimeDetail.TLabel")
+            detail_lbl.grid(row=1, column=2, sticky="e")
+            self.stage_rows.append({"freq": freq_lbl, "time": time_lbl, "detail": detail_lbl})
 
         ttk.Separator(card_out, style="Dark.TSeparator").pack(fill="x", pady=8)
-        self.lbl_total_big = ttk.Label(card_out, text="Temps total (modèle) : —", style="Result.TLabel")
-        self.lbl_total_big.pack(anchor="w", pady=(0, 6))
-        ttk.Separator(card_out, style="Dark.TSeparator").pack(fill="x", pady=8)
-        params_txt = (
-            f"[Régression] d={D_R:+.3f}  K1={K1_R:.3f}  K2={K2_R:.3f}  K3={K3_R:.3f}  "
-            f"(MAE≈{METRICS_REG['MAE']:.2f} min ; RMSE≈{METRICS_REG['RMSE']:.2f} min ; R²≈{METRICS_REG['R2']:.3f})"
-        )
-        ttk.Label(card_out, text=params_txt, style="Mono.TLabel").pack(anchor="w")
+        ttk.Label(card_out, text="Analyse modele", style="Subtle.TLabel").pack(anchor="w")
+        stats = ttk.Frame(card_out, style="CardInner.TFrame")
+        stats.pack(fill="x", pady=(4, 16))
+        stat_defs = [
+            ("ls", "Total LS (4 parametres)", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
+            ("sum", "Somme t_i (LS)", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
+            ("alpha", "Facteur alpha", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
+            ("delta", "Delta exact - LS", "StatCardAccent.TFrame", "StatTitleAccent.TLabel", "StatValueAccent.TLabel", "StatDetailAccent.TLabel"),
+        ]
+        for col, (key, title, frame_style, title_style, value_style, detail_style) in enumerate(stat_defs):
+            self.stat_cards[key] = self._create_stat_card(
+                stats,
+                col,
+                title,
+                frame_style=frame_style,
+                title_style=title_style,
+                value_style=value_style,
+                detail_style=detail_style,
+            )
 
-        pcard = self._card(self, fill="x", expand=True, padx=18, pady=8, padding=(20, 16))
+        params = ttk.Frame(card_out, style="CardInner.TFrame")
+        params.pack(fill="x", pady=(8, 0))
+        ttk.Label(params, text="Parametres de calibrage", style="Subtle.TLabel").pack(anchor="w")
+        params_grid = ttk.Frame(params, style="CardInner.TFrame")
+        params_grid.pack(anchor="w", pady=(4, 0))
+        param_values = [
+            ("d (offset)", f"{D_R:+.3f} min"),
+            ("K1 (tapis 1)", f"{K1_R:.3f}"),
+            ("K2 (tapis 2)", f"{K2_R:.3f}"),
+            ("K3 (tapis 3)", f"{K3_R:.3f}"),
+            ("MAE (LS)", f"{METRICS_REG['MAE']:.2f} min"),
+            ("RMSE (LS)", f"{METRICS_REG['RMSE']:.2f} min"),
+            ("R2 (LS)", f"{METRICS_REG['R2']:.3f}"),
+            ("MAE (interp. exacte)", f"{METRICS_EXACT['MAE']:.2e} min"),
+            ("RMSE (interp. exacte)", f"{METRICS_EXACT['RMSE']:.2e} min"),
+            ("MAX abs (interp. exacte)", f"{METRICS_EXACT['MAXABS']:.2e} min"),
+        ]
+        for name, value in param_values:
+            row = ttk.Frame(params_grid, style="CardInner.TFrame")
+            row.pack(anchor="w", pady=2)
+            ttk.Label(row, text=name, style="ParamName.TLabel").pack(side="left")
+            ttk.Label(row, text=value, style="ParamValue.TLabel").pack(side="left", padx=(12, 0))
+
+        pcard = self._card(self, fill="x", expand=True, padx=18, pady=8, padding=(24, 20))
         ttk.Label(
             pcard,
-            text="Barres de chargement (temps réel, 3 cellules)",
+            text="Barres de chargement (temps reel, 3 cellules)",
             style="CardHeading.TLabel",
         ).pack(anchor="w", pady=(0, 12))
-        self.lbl_bars_info = ttk.Label(pcard, text="", style="Hint.TLabel")
+        self.lbl_bars_info = ttk.Label(pcard, text="", style="Hint.TLabel", wraplength=900, justify="left")
         self.lbl_bars_info.pack(anchor="w", pady=(0, 8))
 
         self.bars = []
         self.bar_texts = []
+        self.stage_status = []
+
         for i in range(3):
-            row = ttk.Frame(pcard, style="CardInner.TFrame")
-            row.pack(fill="x", pady=8)
-            row.columnconfigure(1, weight=1)
-            ttk.Label(row, text=f"Tapis {i+1}", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
-            bar = SegmentedBar(row, height=28)
-            bar.grid(row=0, column=1, sticky="ew")
-            txt = ttk.Label(row, text="—", style="Status.TLabel")
-            txt.grid(row=0, column=2, sticky="e", padx=(12, 0))
+            holder = ttk.Frame(pcard, style="CardInner.TFrame")
+            holder.pack(fill="x", pady=10)
+            title_row = ttk.Frame(holder, style="CardInner.TFrame")
+            title_row.pack(fill="x")
+            ttk.Label(title_row, text=f"Tapis {i+1}", style="Card.TLabel").pack(side="left")
+            status_lbl = ttk.Label(title_row, text="En attente", style="BadgeIdle.TLabel")
+            status_lbl.pack(side="left", padx=(12, 0))
+            bar = SegmentedBar(holder, height=30)
+            bar.pack(fill="x", expand=True, pady=(8, 4))
+            txt = ttk.Label(holder, text="En attente", style="Status.TLabel", anchor="w", wraplength=860)
+            txt.pack(anchor="w")
+            self.stage_status.append(status_lbl)
             self.bars.append(bar)
             self.bar_texts.append(txt)
 
@@ -492,9 +701,13 @@ class FourApp(tk.Tk):
         footer.pack(fill="x", padx=18, pady=(0, 16))
         ttk.Label(
             footer,
-            text="Astuce : lance un calcul pour activer la simulation en temps réel.",
+            text="Astuce : lance un calcul pour activer la simulation en temps reel.",
             style="Footer.TLabel",
         ).pack(anchor="w")
+
+        self._reset_kpis()
+        self._reset_stat_cards()
+        self._reset_stage_statuses()
 
     # ---------- Actions ----------
     def on_reset(self):
@@ -504,10 +717,14 @@ class FourApp(tk.Tk):
         self.seg_idx = 0
         self.seg_start = 0.0
         for b, t in zip(self.bars, self.bar_texts):
-            b.reset(); t.config(text="—")
-        for lf, lt in self.row_labels:
-            lf.config(text="—"); lt.config(text="—")
-        self.lbl_total_big.config(text="Temps total (modèle) : —")
+            b.reset()
+            t.config(text="En attente")
+        for row in self.stage_rows:
+            row["freq"].config(text="-- Hz")
+            row["time"].config(text="--")
+            row["detail"].config(text="--")
+        self.lbl_total_big.config(text="Temps total (interp. exacte) : --")
+        self.lbl_bars_info.config(text="")
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="disabled", text="Pause")
         self.seg_durations = [0.0, 0.0, 0.0]
@@ -517,67 +734,83 @@ class FourApp(tk.Tk):
         self.notified_stage1 = False
         self.notified_stage2 = False
         self.notified_exit = False
+        self.last_calc = None
+        self._reset_kpis()
+        self._reset_stat_cards()
+        self._reset_stage_statuses()
 
     def on_calculer(self):
         try:
             f1 = parse_hz(self.e1.get()); f2 = parse_hz(self.e2.get()); f3 = parse_hz(self.e3.get())
-            if f1<=0 or f2<=0 or f3<=0: raise ValueError("Les fréquences doivent être > 0.")
+            if f1 <= 0 or f2 <= 0 or f3 <= 0:
+                raise ValueError("Les frequences doivent etre > 0.")
         except Exception as e:
-            messagebox.showerror("Entrées invalides", f"Saisie invalide : {e}"); return
+            messagebox.showerror("Entrees invalides", f"Saisie invalide : {e}")
+            return
 
-        # 1) Calculs de base (LS)
         t1, t2, t3, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
-
-        # 2) Total “expérimental” exact par interpolation 12 pts
         T_exp = predict_T_interp12(f1, f2, f3, THETA12)
 
-        # 3) Ré‑échelonnage homogène (t_i*), somme = T_exp
         sum_t = t1 + t2 + t3
         if sum_t <= 1e-9:
-            messagebox.showerror("Entrées invalides", "Somme des temps Σt_i nulle."); return
+            messagebox.showerror("Entrees invalides", "Somme des temps t_i nulle.")
+            return
         if T_exp <= 0:
-            messagebox.showerror("Temps modèle ≤ 0", "Vérifie les entrées et le calibrage."); return
+            messagebox.showerror("Temps modele <= 0", "Verifie les entrees et le calibrage.")
+            return
 
         alpha = T_exp / sum_t
-        t1s, t2s, t3s = alpha*t1, alpha*t2, alpha*t3    # <-- CE SONT LES TEMPS À AFFICHER
+        t1s, t2s, t3s = alpha * t1, alpha * t2, alpha * t3
 
-        # 4) Affichage en haut à droite (cohérent avec les barres)
-        for (lf, lt), f, ts in zip(self.row_labels, (f1,f2,f3), (t1s,t2s,t3s)):
-            lf.config(text=f"{f:.2f} Hz")
-            lt.config(text=f"{fmt_minutes(ts)}  ({ts:.2f} min)")   # montre les t_i*
+        for row, freq, ts in zip(self.stage_rows, (f1, f2, f3), (t1s, t2s, t3s)):
+            row["freq"].config(text=f"{freq:.2f} Hz")
+            row["time"].config(text=fmt_minutes(ts))
+            row["detail"].config(text=f"{ts:.2f} min | {fmt_hms(ts * 60)}")
 
-        # 5) Temps total affiché = T_exp (exact sur tes 12 essais)
-        self.lbl_total_big.config(text=f"Temps total (modèle) : {fmt_minutes(T_exp)}  ({T_exp:.2f} min)")
+        self.lbl_total_big.config(text=f"Temps total (interp. exacte) : {fmt_minutes(T_exp)} | {fmt_hms(T_exp * 60)}")
 
-        # 6) Caler les barres sur les mêmes t_i*
-        # Distances Canvas et durées
         self.alpha = alpha
-        self.seg_distances = [K1*alpha, K2*alpha, K3*alpha]   # vitesses f_i inchangées
-        self.seg_speeds    = [f1, f2, f3]
-        self.seg_durations = [t1s*60.0, t2s*60.0, t3s*60.0]   # <-- durées en secondes des barres
+        self.seg_distances = [K1 * alpha, K2 * alpha, K3 * alpha]
+        self.seg_speeds = [f1, f2, f3]
+        self.seg_durations = [t1s * 60.0, t2s * 60.0, t3s * 60.0]
 
-        for i, (Ki, fi, ti_star) in enumerate(zip((K1,K2,K3), (f1,f2,f3), (t1s,t2s,t3s))):
-            distance = max(1e-9, float(Ki*alpha))
-            duree    = ti_star*60.0
+        for i, (Ki, fi, ti_star) in enumerate(zip((K1, K2, K3), (f1, f2, f3), (t1s, t2s, t3s))):
+            distance = max(1e-9, float(Ki * alpha))
+            duration = ti_star * 60.0
             self.bars[i].set_total(distance)
             self.bar_texts[i].config(
-                text=(f"0%  •  vitesse {fi:.2f} Hz  •  00:00:00 / {fmt_hms(duree)}  •  en attente")
+                text=f"0.0% | vitesse {fi:.2f} Hz | 00:00:00 / {fmt_hms(duration)} | en attente"
             )
 
-        # 7) Ligne d’info opérateur (transparence)
-        info = (f"Σt = {fmt_hms(sum_t*60)}  •  d {('−' if d<0 else '+')} {fmt_hms(abs(d)*60)}  •  "
-                f"T_LS = {fmt_hms(T_LS*60)}  •  T = {fmt_hms(T_exp*60)}  "
-                f"•  barres & t_i* calés sur T (α = {alpha:.3f})")
+        delta_total = T_exp - T_LS
+        info = (
+            f"Exact: {fmt_hms(T_exp * 60)} ({T_exp:.2f} min) | LS: {fmt_hms(T_LS * 60)} ({T_LS:.2f} min)\n"
+            f"Somme t_i (LS): {fmt_hms(sum_t * 60)} ({sum_t:.2f} min) | d={d:+.3f} min | alpha={alpha:.3f}\n"
+            f"K1={K1:.1f}  K2={K2:.1f}  K3={K3:.1f}"
+        )
         self.lbl_bars_info.config(text=info)
 
-        # 8) Mémo pour la fenêtre Explications
+        self._update_kpi("total", fmt_minutes(T_exp), f"{T_exp:.2f} min | {fmt_hms(T_exp * 60)}")
+        self._update_kpi("t1", fmt_minutes(t1s), f"{t1s:.2f} min | {fmt_hms(t1s * 60)} | {f1:.2f} Hz")
+        self._update_kpi("t2", fmt_minutes(t2s), f"{t2s:.2f} min | {fmt_hms(t2s * 60)} | {f2:.2f} Hz")
+        self._update_kpi("t3", fmt_minutes(t3s), f"{t3s:.2f} min | {fmt_hms(t3s * 60)} | {f3:.2f} Hz")
+
+        self._update_stat_card("ls", f"{T_LS:.2f} min", fmt_hms(T_LS * 60))
+        self._update_stat_card("sum", f"{sum_t:.2f} min", fmt_hms(sum_t * 60))
+        self._update_stat_card("alpha", f"{alpha:.3f}", f"{sum_t:.2f} -> {T_exp:.2f}")
+        self._update_stat_card("delta", f"{delta_total:+.2f} min", fmt_hms(abs(delta_total) * 60))
+
+        self._set_stage_status(0, "ready")
+        self._set_stage_status(1, "idle")
+        self._set_stage_status(2, "idle")
+
         self.last_calc = dict(
             f1=f1, f2=f2, f3=f3,
             d=d, K1=K1, K2=K2, K3=K3,
             t1=t1, t2=t2, t3=t3,
             t1_star=t1s, t2_star=t2s, t3_star=t3s,
             T_LS=T_LS, T_exp=T_exp, alpha=alpha,
-            sum_t=sum_t,
+            sum_t=sum_t, delta=delta_total,
         )
 
         self.total_duration = sum(self.seg_durations)
@@ -585,12 +818,15 @@ class FourApp(tk.Tk):
         self.notified_stage2 = False
         self.notified_exit = False
 
-        self.btn_start.config(state="normal"); self.btn_pause.config(state="disabled")
+        self.btn_start.config(state="normal")
+        self.btn_pause.config(state="disabled")
 
     def on_start(self):
-        if self.animating: return
+        if self.animating:
+            return
         if sum(self.seg_durations) <= 0:
-            messagebox.showwarning("Calcul manquant", "Clique d'abord sur « Calculer »."); return
+            messagebox.showwarning("Calcul manquant", "Clique d'abord sur \"Calculer\".")
+            return
         self.animating = True
         self.paused = False
         self.seg_idx = 0
@@ -600,31 +836,34 @@ class FourApp(tk.Tk):
         self.notified_stage2 = False
         self.notified_exit = False
         self.btn_pause.config(state="normal", text="Pause")
-        self._cancel_after()  # évite tout timer résiduel
+        self._set_stage_status(0, "active")
+        self._set_stage_status(1, "ready")
+        self._set_stage_status(2, "idle")
+        self._cancel_after()
         self._tick()
 
     def on_pause(self):
         if not self.animating:
             return
         if not self.paused:
-            # Passage en pause
             self.paused = True
             self.pause_t0 = time.perf_counter()
             self._cancel_after()
             self.btn_pause.config(text="Reprendre")
+            self._set_stage_status(self.seg_idx, "pause")
         else:
-            # Reprise
             delta = time.perf_counter() - self.pause_t0
             self.seg_start += delta
             self.paused = False
             self.btn_pause.config(text="Pause")
-            self._tick()  # relance immédiate ; _tick() replanifie proprement
+            self._set_stage_status(self.seg_idx, "active")
+            self._tick()
 
     def _tick(self):
         if not self.animating:
             return
         if self.paused:
-            return  # ne pas replanifier en pause
+            return
 
         i = self.seg_idx
         dur = max(1e-6, self.seg_durations[i])
@@ -633,12 +872,12 @@ class FourApp(tk.Tk):
         now = time.perf_counter()
         elapsed = now - self.seg_start
         remaining_current = max(0.0, dur - elapsed)
-        remaining_future = sum(self.seg_durations[j] for j in range(i+1, 3))
+        remaining_future = sum(self.seg_durations[j] for j in range(i + 1, 3))
         total_remaining = max(0.0, remaining_current + remaining_future)
-        if (not self.notified_exit and self.total_duration > 5*60 and total_remaining <= 5*60):
+        if (not self.notified_exit and self.total_duration > 5 * 60 and total_remaining <= 5 * 60):
             self.notified_exit = True
             try:
-                messagebox.showinfo("Notification", "Le produit vas sortir du four")
+                messagebox.showinfo("Notification", "Le produit va sortir du four")
             except Exception:
                 pass
         distance_parcourue = max(0.0, vitesse * (elapsed / 60.0))
@@ -649,12 +888,9 @@ class FourApp(tk.Tk):
             prog = distance_parcourue / distance_totale
 
         if prog >= 1.0:
-            # Terminer ce segment
             self.bars[i].set_progress(distance_totale)
             self.bar_texts[i].config(
-                text=(
-                    f"100%  •  vitesse {vitesse:.2f} Hz  •  {fmt_hms(dur)} / {fmt_hms(dur)}  •  terminé"
-                )
+                text=f"100% | vitesse {vitesse:.2f} Hz | {fmt_hms(dur)} / {fmt_hms(dur)} | termine"
             )
             if i == 0 and not self.notified_stage1:
                 try:
@@ -668,11 +904,12 @@ class FourApp(tk.Tk):
                 except Exception:
                     pass
                 self.notified_stage2 = True
+            self._set_stage_status(i, "done")
             self.seg_idx += 1
             if self.seg_idx >= 3:
                 self.animating = False
-                self.btn_pause.config(state="disabled", text="Pause"); return
-            # suivant
+                self.btn_pause.config(state="disabled", text="Pause")
+                return
             self.seg_start = now
             j = self.seg_idx
             vitesse_j = self.seg_speeds[j]
@@ -680,22 +917,22 @@ class FourApp(tk.Tk):
             distance_j = max(1e-9, self.seg_distances[j])
             self.bars[j].set_total(distance_j)
             self.bar_texts[j].config(
-                text=(
-                    f"0%  •  vitesse {vitesse_j:.2f} Hz  •  00:00:00 / {fmt_hms(duree_j)}  •  en cours…"
-                )
+                text=f"0.0% | vitesse {vitesse_j:.2f} Hz | 00:00:00 / {fmt_hms(duree_j)} | en cours"
             )
+            self._set_stage_status(j, "active")
+            if j + 1 < 3:
+                self._set_stage_status(j + 1, "ready")
             self._schedule_tick()
             return
 
         pct = max(0.0, min(1.0, prog)) * 100.0
         self.bars[i].set_progress(distance_parcourue)
         self.bar_texts[i].config(
-            text=(
-                f"{pct:5.1f}%  •  vitesse {vitesse:.2f} Hz  •  {fmt_hms(elapsed)} / {fmt_hms(dur)}  •  en cours…"
-            )
+            text=f"{pct:5.1f}% | vitesse {vitesse:.2f} Hz | {fmt_hms(elapsed)} / {fmt_hms(dur)} | en cours"
         )
 
         self._schedule_tick()
+
 
 
 
