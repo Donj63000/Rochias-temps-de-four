@@ -4,6 +4,7 @@
 
 import math, time, tkinter as tk
 from tkinter import ttk, messagebox
+from tkinter import scrolledtext, filedialog  # pour la fenêtre Explications
 
 # ---- numpy pour l'algèbre ----
 try:
@@ -250,9 +251,24 @@ class FourApp(tk.Tk):
         self.seg_distances = [0.0, 0.0, 0.0]   # longueurs équivalentes (K1,K2,K3)
         self.seg_speeds = [0.0, 0.0, 0.0]      # vitesses (Hz) des 3 tapis
         self.mode = tk.StringVar(value="anchor")  # 'anchor' ou 'reg'
+        self._after_id = None       # gestion propre du timer Tk
+        self.alpha = 1.0            # facteur d’échelle des barres : T / (t1+t2+t3)
+        self.last_calc = None       # stockage du dernier calcul pour Explications
 
         # UI
         self._build_ui()
+
+    def _cancel_after(self):
+        if getattr(self, "_after_id", None):
+            try:
+                self.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _schedule_tick(self):
+        self._cancel_after()
+        self._after_id = self.after(int(TICK_SECONDS * 1000), self._tick)
 
     def _init_styles(self):
         style = ttk.Style(self)
@@ -439,6 +455,8 @@ class FourApp(tk.Tk):
         )
         self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2)
         ttk.Button(btns, text="Reset", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2)
+        ttk.Button(btns, text="Explications", command=self.on_explanations, style="Ghost.TButton")\
+           .grid(row=0, column=4, padx=(12, 0), pady=2)
 
         card_out = self._card(top, side="left", fill="both", expand=True, padx=(8, 0))
         ttk.Label(card_out, text="Résultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
@@ -478,6 +496,8 @@ class FourApp(tk.Tk):
             text="Barres de chargement (temps réel, 3 cellules)",
             style="CardHeading.TLabel",
         ).pack(anchor="w", pady=(0, 12))
+        self.lbl_bars_info = ttk.Label(pcard, text="", style="Hint.TLabel")
+        self.lbl_bars_info.pack(anchor="w", pady=(0, 8))
 
         self.bars = []
         self.bar_texts = []
@@ -515,6 +535,7 @@ class FourApp(tk.Tk):
 
     # ---------- Actions ----------
     def on_reset(self):
+        self._cancel_after()
         self.animating = False
         self.paused = False
         self.seg_idx = 0
@@ -545,20 +566,48 @@ class FourApp(tk.Tk):
             lf.config(text=f"{f:.2f} Hz"); lt.config(text=f"{fmt_minutes(t)}  ({t:.2f} min)")
         self.lbl_total_big.config(text=f"Temps total (modèle) : {fmt_minutes(Ttot)}  ({Ttot:.2f} min)")
 
-        # Barres : init temps réels (secondes) + texte
-        self.seg_durations = [t1*60.0, t2*60.0, t3*60.0]
-        self.seg_distances = [K1, K2, K3]
-        self.seg_speeds = [f1, f2, f3]
+        # ---- Barres : calage sur le temps modèle T ----
+        sum_t = t1 + t2 + t3
+        if sum_t <= 1e-9:
+            messagebox.showerror("Entrées invalides", "Somme des temps Σt_i nulle."); return
+        if Ttot <= 0:
+            messagebox.showerror("Temps modèle négatif", "T ≤ 0 — vérifier les entrées et le calibrage."); return
+
+        alpha = Ttot / sum_t
+        self.alpha = alpha
+
+        # Distances équivalentes sur la Canvas (min·Hz)
+        # (on garde f_i en Hz ; durée d’une barre = (distance/f)×60 = (K_i*alpha/f_i)×60 = alpha×t_i×60)
+        self.seg_distances = [K1*alpha, K2*alpha, K3*alpha]
+        self.seg_speeds    = [f1, f2, f3]
+        self.seg_durations = [t1*60.0*alpha, t2*60.0*alpha, t3*60.0*alpha]
+
         for i in range(3):
             distance = max(1e-9, float(self.seg_distances[i]))
-            duree = self.seg_durations[i]
-            vitesse = self.seg_speeds[i]
+            duree    = self.seg_durations[i]
+            vitesse  = self.seg_speeds[i]
             self.bars[i].set_total(distance)
             self.bar_texts[i].config(
-                text=(
-                    f"0%  •  vitesse {vitesse:.2f} Hz  •  00:00:00 / {fmt_hms(duree)}  •  en attente"
-                )
+                text=(f"0%  •  vitesse {vitesse:.2f} Hz  •  00:00:00 / {fmt_hms(duree)}  •  en attente")
             )
+
+        # Résumé visible pour l’opérateur : Σt, d, T, alpha
+        delta = Ttot - sum_t  # = d
+        sign  = "−" if delta < 0 else "+"
+        self.lbl_bars_info.config(
+            text=(
+                f"Σt = {fmt_hms(sum_t*60)}  •  d {sign} {fmt_hms(abs(delta)*60)}  •  "
+                f"T = {fmt_hms(Ttot*60)}  •  barres calées sur T (α = {alpha:.3f})"
+            )
+        )
+
+        # Mémorise le calcul pour la fenêtre Explications
+        self.last_calc = dict(
+            mode=self.mode.get(), f1=f1, f2=f2, f3=f3,
+            d=d, K1=K1, K2=K2, K3=K3,
+            t1=t1, t2=t2, t3=t3, T=Ttot, alpha=alpha
+        )
+
         self.btn_start.config(state="normal"); self.btn_pause.config(state="disabled")
 
     def on_start(self):
@@ -570,25 +619,31 @@ class FourApp(tk.Tk):
         self.seg_idx = 0
         self.seg_start = time.perf_counter()
         self.btn_pause.config(state="normal", text="Pause")
+        self._cancel_after()  # évite tout timer résiduel
         self._tick()
 
     def on_pause(self):
-        if not self.animating: return
+        if not self.animating:
+            return
         if not self.paused:
+            # Passage en pause
             self.paused = True
             self.pause_t0 = time.perf_counter()
+            self._cancel_after()
             self.btn_pause.config(text="Reprendre")
         else:
+            # Reprise
             delta = time.perf_counter() - self.pause_t0
             self.seg_start += delta
             self.paused = False
             self.btn_pause.config(text="Pause")
-            self._tick()
+            self._tick()  # relance immédiate ; _tick() replanifie proprement
 
     def _tick(self):
-        if not self.animating: return
+        if not self.animating:
+            return
         if self.paused:
-            self.after(int(TICK_SECONDS*1000), self._tick); return
+            return  # ne pas replanifier en pause
 
         i = self.seg_idx
         dur = max(1e-6, self.seg_durations[i])
@@ -627,7 +682,7 @@ class FourApp(tk.Tk):
                     f"0%  •  vitesse {vitesse_j:.2f} Hz  •  00:00:00 / {fmt_hms(duree_j)}  •  en cours…"
                 )
             )
-            self.after(int(TICK_SECONDS*1000), self._tick)
+            self._schedule_tick()
             return
 
         pct = max(0.0, min(1.0, prog)) * 100.0
@@ -638,7 +693,106 @@ class FourApp(tk.Tk):
             )
         )
 
-        self.after(int(TICK_SECONDS*1000), self._tick)
+        self._schedule_tick()
+
+    def on_explanations(self):
+        # Récupérer les dernières valeurs ; sinon tenter un calcul rapide
+        calc = self.last_calc
+        try:
+            if calc is None:
+                f1 = parse_hz(self.e1.get()); f2 = parse_hz(self.e2.get()); f3 = parse_hz(self.e3.get())
+                mode = self.mode.get()
+                t1, t2, t3, Ttot, (d, K1, K2, K3) = compute_times(f1, f2, f3, mode)
+                sum_t = t1 + t2 + t3
+                alpha = Ttot / sum_t if sum_t > 0 else float('nan')
+                calc = dict(mode=mode, f1=f1,f2=f2,f3=f3, d=d, K1=K1,K2=K2,K3=K3,
+                            t1=t1,t2=t2,t3=t3, T=Ttot, alpha=alpha)
+        except Exception:
+            pass
+
+        # Construire le texte d'explication
+        lines = []
+        lines.append("EXPlications détaillées — Modèle du four (3 tapis)\n")
+        lines.append("1) Modèle mathématique\n")
+        lines.append("   T = d + K1/f1 + K2/f2 + K3/f3\n")
+        lines.append("   • f_i : fréquence variateur (Hz) — si l’IHM affiche 4000, on prend f=40.00 Hz (IHM/100)\n")
+        lines.append("   • K_i : constantes (min·Hz) — longueur équivalente/chemin thermique du tapis i\n")
+        lines.append("   • d   : intercepte global (min) — capte les effets non linéaires/constantes (chevauchements, zones fixes, etc.)\n")
+        lines.append("")
+        if calc:
+            f1,f2,f3 = calc['f1'], calc['f2'], calc['f3']
+            K1,K2,K3 = calc['K1'], calc['K2'], calc['K3']
+            d = calc['d']; t1,t2,t3 = calc['t1'], calc['t2'], calc['t3']; T = calc['T']
+            sum_t = t1+t2+t3
+            alpha = calc['alpha']
+            mode = "Ancrage‑4" if calc['mode']=="anchor" else "Régression globale (LS)"
+
+            lines.append("2) Données calculées (en minutes)")        
+            lines.append(f"   Mode : {mode}")
+            lines.append(f"   Paramètres : d = {d:+.3f} min ;  K1 = {K1:.3f} ; K2 = {K2:.3f} ; K3 = {K3:.3f} (min·Hz)")
+            lines.append(f"   Entrées : f1 = {f1:.2f} Hz ; f2 = {f2:.2f} Hz ; f3 = {f3:.2f} Hz")
+            lines.append(f"   Temps convoyage pur : t1 = {t1:.3f} ; t2 = {t2:.3f} ; t3 = {t3:.3f}  (Σt = {sum_t:.3f})")
+            lines.append(f"   Temps total modèle : T = d + Σt = {d:+.3f} + {sum_t:.3f} = {T:.3f} min  ({fmt_hms(T*60)})")
+            lines.append("")
+            lines.append("3) Pourquoi les barres finissent en T (et non Σt)")
+            lines.append("   • d ne s’attache à aucun tapis ; pour une visualisation opérationnelle, on le redistribue")
+            lines.append("     proportionnellement aux t_i. Cela revient à appliquer un facteur commun α = T / Σt.")
+            lines.append("   • Durées animées : t_i* = α · t_i  ⇒  Σ t_i* = T.")
+            lines.append(f"   • Dans cette simulation : α = {alpha:.6f}")
+            lines.append(f"     → t1* = {alpha*t1:.3f} min ({fmt_hms(alpha*t1*60)})")
+            lines.append(f"     → t2* = {alpha*t2:.3f} min ({fmt_hms(alpha*t2*60)})")
+            lines.append(f"     → t3* = {alpha*t3:.3f} min ({fmt_hms(alpha*t3*60)})")
+            lines.append("")
+            lines.append("4) Interprétation des barres (Canvas)")
+            lines.append("   • On anime une « distance » D_i (min·Hz) parcourue à la vitesse f_i (Hz) :")
+            lines.append("       distance_parcourue = f_i · (temps_écoulé / 60)")
+            lines.append("       fin de la barre quand distance_parcourue ≥ D_i")
+            lines.append("   • Pour caler la durée à t_i* minutes, on prend D_i = α · K_i ; le temps vaut (D_i/f_i)·60 = α·t_i·60.")
+            lines.append("")
+            lines.append("5) Choix de calibrage")
+            lines.append("   • Ancrage‑4 : paramètres (d,K_i) calculés pour coller EXACTEMENT aux 4 points repères A/B/C/D.")
+            lines.append("   • Régression globale (LS) : moindres carrés sur les 12 essais, métriques affichées (MAE, RMSE, R²).")
+            lines.append("")
+            lines.append("6) Bonnes pratiques / limites")
+            lines.append("   • Si T <= 0, vérifier les entrées et le calibrage (cas non physique).")
+            lines.append("   • α peut être < 1 (d négatif) ou > 1 (d positif) ; les proportions entre tapis sont conservées.")
+            lines.append("   • Le ré‑échelonnage n’altère pas la part relative de chaque tapis ; il assure seulement Σ barres = T.")
+        else:
+            lines.append("Aucun calcul disponible. Lancez « Calculer » pour générer les valeurs spécifiques (f1,f2,f3, t_i, T, α).")
+
+        text = "\n".join(lines)
+
+        # Fenêtre modale
+        win = tk.Toplevel(self)
+        win.title("Explications détaillées")
+        win.configure(bg=BG)
+        win.geometry("900x640")
+
+        # Zone scrollable en lecture seule
+        txt = scrolledtext.ScrolledText(win, wrap="word", font=("Consolas", 11), bg=CARD, fg=TEXT, insertbackground=TEXT)
+        txt.pack(fill="both", expand=True, padx=12, pady=12)
+        txt.insert("1.0", text)
+        txt.configure(state="disabled")
+
+        # Boutons copier / exporter
+        bar = ttk.Frame(win, style="TFrame"); bar.pack(fill="x", padx=12, pady=(0,12))
+        def _copy():
+            self.clipboard_clear(); self.clipboard_append(text)
+        def _export():
+            path = filedialog.asksaveasfilename(
+                title="Exporter les explications",
+                defaultextension=".txt",
+                filetypes=[("Fichier texte", "*.txt"), ("Tous fichiers", "*.*")]
+            )
+            if path:
+                try:
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    messagebox.showinfo("Export", f"Explications exportées :\n{path}")
+                except Exception as e:
+                    messagebox.showerror("Export", f"Erreur d'export : {e}")
+        ttk.Button(bar, text="Copier dans le presse-papiers", command=_copy, style="Ghost.TButton").pack(side="left")
+        ttk.Button(bar, text="Exporter en .txt", command=_export, style="Ghost.TButton").pack(side="left", padx=(8,0))
 
 # ---------- Lancement ----------
 if __name__ == "__main__":
