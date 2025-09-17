@@ -78,6 +78,32 @@ def calibrate_anchor4(exps):
     beta = np.linalg.solve(Aeq, beq)
     return beta.tolist(), {"anchors": anchors}
 
+# ================== Interpolation exacte (12 points) sur T ==================
+def _phi_features(f1, f2, f3):
+    # base en 1/f, termes quadratiques + interactions + qq cubiques
+    inv1, inv2, inv3 = 1.0/f1, 1.0/f2, 1.0/f3
+    return np.array([
+        1.0,
+        inv1, inv2, inv3,
+        inv1**2, inv2**2, inv3**2,
+        inv1*inv2, inv1*inv3, inv2*inv3,
+        inv1**3, inv3**3
+    ], float)
+
+def calibrate_interp12(exps):
+    """Interpole EXACTEMENT les 12 expériences: phi(f)^T theta = T."""
+    X = np.array([_phi_features(e[0]/100.0, e[1]/100.0, e[2]/100.0) for e in exps], float)
+    y = np.array([e[3] for e in exps], float)
+    theta, *_ = np.linalg.lstsq(X, y, rcond=None)  # SVD, stable numériquement
+    yhat = X @ theta
+    resid = y - yhat
+    mae = float(np.mean(np.abs(resid)))
+    rmse = float(np.sqrt(np.mean(resid**2)))
+    return theta, {"MAE": mae, "RMSE": rmse, "MAXABS": float(np.max(np.abs(resid)))}
+
+def predict_T_interp12(f1, f2, f3, theta):
+    return float(_phi_features(f1, f2, f3) @ theta)
+
 # --- Calibrage par défaut : Ancrage‑4 (pour coller à ton tableur)
 PARAMS_ANCHOR4, ANCHOR_INFO = calibrate_anchor4(EXPS)
 D_A, K1_A, K2_A, K3_A = PARAMS_ANCHOR4
@@ -85,6 +111,9 @@ D_A, K1_A, K2_A, K3_A = PARAMS_ANCHOR4
 # --- Calibrage global (scientifique)
 PARAMS_REG, METRICS_REG = calibrate_regression(EXPS)
 D_R, K1_R, K2_R, K3_R = PARAMS_REG
+
+# --- Calibrage : theta_12 (exact sur la base de 12 points)
+THETA12, METRICS_EXACT = calibrate_interp12(EXPS)  # MAE ~ 1e-12 ici
 
 # ================== Utilitaires ==================
 def parse_hz(s: str) -> float:
@@ -254,6 +283,10 @@ class FourApp(tk.Tk):
         self._after_id = None       # gestion propre du timer Tk
         self.alpha = 1.0            # facteur d’échelle des barres : T / (t1+t2+t3)
         self.last_calc = None       # stockage du dernier calcul pour Explications
+        self.total_duration = 0.0
+        self.notified_stage1 = False
+        self.notified_stage2 = False
+        self.notified_exit = False
 
         # UI
         self._build_ui()
@@ -527,9 +560,11 @@ class FourApp(tk.Tk):
     def _update_model_label(self):
         mode = self.mode.get()
         if mode == "anchor":
-            text = "Modèle utilisé : Ancrage‑4 — calibrage verrouillé sur les repères A/B/C/D."
+            text = "Modèle utilisé : Ancrage‑4 — calibrage verrouillé sur A/B/C/D (exact sur ces 4 points)."
         else:
-            text = "Modèle utilisé : Régression globale — moindres carrés sur les 12 expériences."
+            # ### NEW : on précise qu'on corrige le total via l'interpolation exacte
+            text = ("Modèle utilisé : Régression globale (LS) pour les parts t_i = K_i/f_i, "
+                    "et total T calé par interpolation exacte (12 points).")
         if hasattr(self, "lbl_model"):
             self.lbl_model.config(text=text)
 
@@ -550,6 +585,10 @@ class FourApp(tk.Tk):
         self.seg_durations = [0.0, 0.0, 0.0]
         self.seg_distances = [0.0, 0.0, 0.0]
         self.seg_speeds = [0.0, 0.0, 0.0]
+        self.total_duration = 0.0
+        self.notified_stage1 = False
+        self.notified_stage2 = False
+        self.notified_exit = False
         self._update_model_label()
 
     def on_calculer(self):
@@ -559,25 +598,36 @@ class FourApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Entrées invalides", f"Saisie invalide : {e}"); return
 
-        t1, t2, t3, Ttot, (d,K1,K2,K3) = compute_times(f1, f2, f3, self.mode.get())
+        t1, t2, t3, T_model, (d, K1, K2, K3) = compute_times(f1, f2, f3, self.mode.get())
 
         # Affichage
         for (lf, lt), f, t in zip(self.row_labels, (f1,f2,f3), (t1,t2,t3)):
             lf.config(text=f"{f:.2f} Hz"); lt.config(text=f"{fmt_minutes(t)}  ({t:.2f} min)")
-        self.lbl_total_big.config(text=f"Temps total (modèle) : {fmt_minutes(Ttot)}  ({Ttot:.2f} min)")
 
-        # ---- Barres : calage sur le temps modèle T ----
+        # --- Choix du total affiché ---
+        # En mode LS: on corrige le total par l'interpolation exacte (12 pts) pour coller aux expériences.
+        # En mode Ancrage-4: on garde T_model (déjà exact sur A/B/C/D).
+        if self.mode.get() == "reg":
+            T_used = predict_T_interp12(f1, f2, f3, THETA12)  # ### NEW
+            T_base = T_model                                  # utile pour l'explication
+        else:
+            T_used = T_model
+            T_base = T_model
+
+        # --- Mise à jour de l'affichage du total ---
+        self.lbl_total_big.config(text=f"Temps total (modèle) : {fmt_minutes(T_used)}  ({T_used:.2f} min)")
+
+        # --- Barres : calage sur le T choisi ---
         sum_t = t1 + t2 + t3
         if sum_t <= 1e-9:
             messagebox.showerror("Entrées invalides", "Somme des temps Σt_i nulle."); return
-        if Ttot <= 0:
-            messagebox.showerror("Temps modèle négatif", "T ≤ 0 — vérifier les entrées et le calibrage."); return
+        if T_used <= 0:
+            messagebox.showerror("Temps modèle ≤ 0", "Vérifie les entrées et le calibrage."); return
 
-        alpha = Ttot / sum_t
+        alpha = T_used / sum_t
         self.alpha = alpha
 
-        # Distances équivalentes sur la Canvas (min·Hz)
-        # (on garde f_i en Hz ; durée d’une barre = (distance/f)×60 = (K_i*alpha/f_i)×60 = alpha×t_i×60)
+        # Distances Canvas (min·Hz) et durées ré-étalonnées (secondes)
         self.seg_distances = [K1*alpha, K2*alpha, K3*alpha]
         self.seg_speeds    = [f1, f2, f3]
         self.seg_durations = [t1*60.0*alpha, t2*60.0*alpha, t3*60.0*alpha]
@@ -587,26 +637,32 @@ class FourApp(tk.Tk):
             duree    = self.seg_durations[i]
             vitesse  = self.seg_speeds[i]
             self.bars[i].set_total(distance)
-            self.bar_texts[i].config(
-                text=(f"0%  •  vitesse {vitesse:.2f} Hz  •  00:00:00 / {fmt_hms(duree)}  •  en attente")
-            )
+            self.bar_texts[i].config(text=(f"0%  •  vitesse {vitesse:.2f} Hz  •  "
+                                           f"00:00:00 / {fmt_hms(duree)}  •  en attente"))
 
-        # Résumé visible pour l’opérateur : Σt, d, T, alpha
-        delta = Ttot - sum_t  # = d
+        # Résumé opérateur (on montre aussi le T_base si LS)
+        delta = T_model - (t1 + t2 + t3)  # = d
         sign  = "−" if delta < 0 else "+"
-        self.lbl_bars_info.config(
-            text=(
-                f"Σt = {fmt_hms(sum_t*60)}  •  d {sign} {fmt_hms(abs(delta)*60)}  •  "
-                f"T = {fmt_hms(Ttot*60)}  •  barres calées sur T (α = {alpha:.3f})"
-            )
-        )
+        info  = (f"Σt = {fmt_hms(sum_t*60)}  •  d {sign} {fmt_hms(abs(delta)*60)}  •  ")
+        if self.mode.get() == "reg":
+            info += (f"T_LS = {fmt_hms(T_base*60)}  •  T = {fmt_hms(T_used*60)}  "
+                     f"•  barres calées sur T (α = {alpha:.3f})")
+        else:
+            info += (f"T = {fmt_hms(T_used*60)}  •  barres calées sur T (α = {alpha:.3f})")
+        self.lbl_bars_info.config(text=info)
 
-        # Mémorise le calcul pour la fenêtre Explications
+        # Mémo pour la fenêtre Explications
         self.last_calc = dict(
             mode=self.mode.get(), f1=f1, f2=f2, f3=f3,
             d=d, K1=K1, K2=K2, K3=K3,
-            t1=t1, t2=t2, t3=t3, T=Ttot, alpha=alpha
+            t1=t1, t2=t2, t3=t3,
+            T_model=T_model, T_used=T_used, alpha=alpha
         )
+
+        self.total_duration = sum(self.seg_durations)
+        self.notified_stage1 = False
+        self.notified_stage2 = False
+        self.notified_exit = False
 
         self.btn_start.config(state="normal"); self.btn_pause.config(state="disabled")
 
@@ -618,6 +674,10 @@ class FourApp(tk.Tk):
         self.paused = False
         self.seg_idx = 0
         self.seg_start = time.perf_counter()
+        self.total_duration = sum(self.seg_durations)
+        self.notified_stage1 = False
+        self.notified_stage2 = False
+        self.notified_exit = False
         self.btn_pause.config(state="normal", text="Pause")
         self._cancel_after()  # évite tout timer résiduel
         self._tick()
@@ -651,6 +711,15 @@ class FourApp(tk.Tk):
         vitesse = self.seg_speeds[i]
         now = time.perf_counter()
         elapsed = now - self.seg_start
+        remaining_current = max(0.0, dur - elapsed)
+        remaining_future = sum(self.seg_durations[j] for j in range(i+1, 3))
+        total_remaining = max(0.0, remaining_current + remaining_future)
+        if (not self.notified_exit and self.total_duration > 5*60 and total_remaining <= 5*60):
+            self.notified_exit = True
+            try:
+                messagebox.showinfo("Notification", "Le produit vas sortir du four")
+            except Exception:
+                pass
         distance_parcourue = max(0.0, vitesse * (elapsed / 60.0))
         if distance_parcourue >= distance_totale:
             distance_parcourue = distance_totale
@@ -666,6 +735,18 @@ class FourApp(tk.Tk):
                     f"100%  •  vitesse {vitesse:.2f} Hz  •  {fmt_hms(dur)} / {fmt_hms(dur)}  •  terminé"
                 )
             )
+            if i == 0 and not self.notified_stage1:
+                try:
+                    messagebox.showinfo("Notification", "Le produit passe dans le tapis 2")
+                except Exception:
+                    pass
+                self.notified_stage1 = True
+            elif i == 1 and not self.notified_stage2:
+                try:
+                    messagebox.showinfo("Notification", "Le produit passe dans le tapis 3")
+                except Exception:
+                    pass
+                self.notified_stage2 = True
             self.seg_idx += 1
             if self.seg_idx >= 3:
                 self.animating = False
@@ -722,22 +803,29 @@ class FourApp(tk.Tk):
         if calc:
             f1,f2,f3 = calc['f1'], calc['f2'], calc['f3']
             K1,K2,K3 = calc['K1'], calc['K2'], calc['K3']
-            d = calc['d']; t1,t2,t3 = calc['t1'], calc['t2'], calc['t3']; T = calc['T']
-            sum_t = t1+t2+t3
-            alpha = calc['alpha']
-            mode = "Ancrage‑4" if calc['mode']=="anchor" else "Régression globale (LS)"
+            d = calc['d']; t1,t2,t3 = calc['t1'], calc['t2'], calc['t3']
+            T_model = calc.get('T_model', t1+t2+t3 + d)
+            # ### NEW
+            T_exact = predict_T_interp12(f1, f2, f3, THETA12) if calc['mode']=="reg" else T_model
+            T = calc.get('T_used', T_exact)
+            sum_t = t1 + t2 + t3
+            alpha = calc.get('alpha', (T/sum_t if sum_t>0 else float('nan')))
+            mode = "Ancrage‑4" if calc['mode']=="anchor" else "Régression globale (LS + interpolation exacte sur T)"
 
-            lines.append("2) Données calculées (en minutes)")        
+            lines.append("2) Données calculées (en minutes)")
             lines.append(f"   Mode : {mode}")
-            lines.append(f"   Paramètres : d = {d:+.3f} min ;  K1 = {K1:.3f} ; K2 = {K2:.3f} ; K3 = {K3:.3f} (min·Hz)")
+            lines.append(f"   Paramètres (LS/Ancrage) : d = {d:+.3f} min ;  K1 = {K1:.3f} ; K2 = {K2:.3f} ; K3 = {K3:.3f} (min·Hz)")
             lines.append(f"   Entrées : f1 = {f1:.2f} Hz ; f2 = {f2:.2f} Hz ; f3 = {f3:.2f} Hz")
             lines.append(f"   Temps convoyage pur : t1 = {t1:.3f} ; t2 = {t2:.3f} ; t3 = {t3:.3f}  (Σt = {sum_t:.3f})")
-            lines.append(f"   Temps total modèle : T = d + Σt = {d:+.3f} + {sum_t:.3f} = {T:.3f} min  ({fmt_hms(T*60)})")
+            if calc['mode']=="reg":
+                lines.append(f"   Total LS 4‑paramètres : T_LS = d + Σt = {T_model:.3f} min ({fmt_hms(T_model*60)})")
+                lines.append(f"   Total corrigé (interp. exacte 12 pts) : T = {T_exact:.3f} min ({fmt_hms(T_exact*60)})")
+            else:
+                lines.append(f"   Temps total modèle : T = {T_model:.3f} min ({fmt_hms(T_model*60)})")
             lines.append("")
-            lines.append("3) Pourquoi les barres finissent en T (et non Σt)")
-            lines.append("   • d ne s’attache à aucun tapis ; pour une visualisation opérationnelle, on le redistribue")
-            lines.append("     proportionnellement aux t_i. Cela revient à appliquer un facteur commun α = T / Σt.")
-            lines.append("   • Durées animées : t_i* = α · t_i  ⇒  Σ t_i* = T.")
+            lines.append("3) Animation des barres (calage sur T)")
+            lines.append("   • Répartition physique : t_i = K_i/f_i (issue du modèle LS/Ancrage).")
+            lines.append("   • Calage sur le total affiché : t_i* = α · t_i,  avec  α = T / Σt  ⇒  Σ t_i* = T.")
             lines.append(f"   • Dans cette simulation : α = {alpha:.6f}")
             lines.append(f"     → t1* = {alpha*t1:.3f} min ({fmt_hms(alpha*t1*60)})")
             lines.append(f"     → t2* = {alpha*t2:.3f} min ({fmt_hms(alpha*t2*60)})")
