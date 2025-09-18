@@ -115,13 +115,6 @@ K1_DIST, K2_DIST, K3_DIST, D_ANCH = calibrate_anchor_from_ABCD(EXPS)
 # --- Calibrage : theta_12 (exact sur la base de 12 points)
 THETA12, METRICS_EXACT = calibrate_interp12(EXPS)  # MAE ~ 1e-12 ici
 
-PRESET_VALUES = [
-    ("Ancre A", ("9000", "9000", "9000")),
-    ("Tapis 1 lent", ("5000", "9000", "9000")),
-    ("Tapis 3 lent", ("9000", "9000", "5000")),
-    ("Équilibre", ("6500", "7200", "7800")),
-]
-
 # ================== Utilitaires ==================
 def parse_hz(s: str) -> float:
     """Accepte 40.00 (Hz) ou 4000 (IHM). >200 => IHM/100."""
@@ -359,6 +352,43 @@ class Tooltip:
             pass
         self.tip = None
 
+# ================== Widgets réutilisables ==================
+class Collapsible(ttk.Frame):
+    """Cadre repliable type 'disclosure' (► / ▼)."""
+
+    def __init__(self, master, title="Détails", open=False):
+        super().__init__(master, style="CardInner.TFrame")
+        self._open = bool(open)
+        self._title = title
+        hdr = ttk.Frame(self, style="CardInner.TFrame")
+        hdr.pack(fill="x")
+        self._btn = ttk.Button(
+            hdr,
+            text=self._label_text(),
+            style="Ghost.TButton",
+            command=self.toggle,
+            padding=(8, 4),
+        )
+        self._btn.pack(side="left")
+        self.body = ttk.Frame(self, style="CardInner.TFrame")
+        if self._open:
+            self.body.pack(fill="both", expand=True, pady=(6, 0))
+
+    def _label_text(self):
+        return ("▼ " if self._open else "► ") + self._title
+
+    def toggle(self):
+        self._open = not self._open
+        self._btn.config(text=self._label_text())
+        if self._open:
+            self.body.pack(fill="both", expand=True, pady=(6, 0))
+        else:
+            self.body.forget()
+
+    def set_open(self, open_: bool):
+        if bool(open_) != self._open:
+            self.toggle()
+
 # ================== Application ==================
 class FourApp(tk.Tk):
     def __init__(self):
@@ -410,6 +440,7 @@ class FourApp(tk.Tk):
         self.stage_status = []
         self.kpi_labels = {}
         self.stage_rows = []
+        self.operator_mode = True
 
         self.logo_img = None
         self._error_after = None
@@ -418,7 +449,9 @@ class FourApp(tk.Tk):
 
         # UI
         self._build_ui()
+        self.set_density(True)
         self._set_default_inputs()
+        self.set_operator_mode(True)
 
         self.bind_all("<Return>", lambda e: self.on_calculer())
         self.bind_all("<F5>", lambda e: self.on_start())
@@ -828,13 +861,6 @@ class FourApp(tk.Tk):
             value_lbl.config(text="--")
             detail_lbl.config(text="--")
 
-    def _apply_preset(self, values):
-        self.on_reset()
-        entries = (self.e1, self.e2, self.e3)
-        for entry, val in zip(entries, values):
-            entry.delete(0, tk.END)
-            entry.insert(0, val)
-
     def _reset_stage_statuses(self):
         for idx in range(len(self.stage_status)):
             self._set_stage_status(idx, "idle")
@@ -901,6 +927,13 @@ class FourApp(tk.Tk):
             command=lambda: self.set_density(not self.compact_mode),
         )
         self.density_button.pack(side="left", padx=(8, 0))
+        self.mode_button = ttk.Button(
+            badge_box,
+            text="Mode opérateur",
+            style="Chip.TButton",
+            command=lambda: self.set_operator_mode(not self.operator_mode),
+        )
+        self.mode_button.pack(side="left", padx=(8, 0))
 
         subtitle = ttk.Label(
             hero,
@@ -947,10 +980,41 @@ class FourApp(tk.Tk):
         body = VScrollFrame(self)
         body.pack(fill="both", expand=True)
 
+        pcard = self._card(body.inner, fill="x", expand=False, padx=18, pady=8, padding=(24, 20))
+        ttk.Label(
+            pcard,
+            text="Barres de chargement (temps réel, 3 cellules)",
+            style="CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 12))
+        self.lbl_bars_info = ttk.Label(pcard, text="", style="Hint.TLabel", wraplength=900, justify="left")
+        self.lbl_bars_info.pack(anchor="w", pady=(0, 8))
+        self._responsive_labels.append((self.lbl_bars_info, 0.85))
+        pcard.bind("<Configure>", self._on_resize_wrapping)
+
+        self.bars = []
+        self.bar_texts = []
+        self.stage_status = []
+
+        for i in range(3):
+            holder = ttk.Frame(pcard, style="CardInner.TFrame")
+            holder.pack(fill="x", pady=10)
+            title_row = ttk.Frame(holder, style="CardInner.TFrame")
+            title_row.pack(fill="x")
+            ttk.Label(title_row, text=f"Tapis {i+1}", style="Card.TLabel").pack(side="left")
+            status_lbl = ttk.Label(title_row, text="⏳ En attente", style="BadgeIdle.TLabel")
+            status_lbl.pack(side="left", padx=(12, 0))
+            bar = SegmentedBar(holder, height=30)
+            bar.pack(fill="x", expand=True, pady=(8, 4))
+            txt = ttk.Label(holder, text="En attente", style="Status.TLabel", anchor="w", wraplength=860)
+            txt.pack(anchor="w")
+            self.stage_status.append(status_lbl)
+            self.bars.append(bar)
+            self.bar_texts.append(txt)
+
         top = ttk.Frame(body.inner, style="TFrame")
         top.pack(fill="x", expand=False, padx=18, pady=6)
 
-        card_in = self._card(top, side="left", fill="both", expand=True, padx=(0, 8))
+        card_in = self._card(top, side="left", fill="both", expand=True, padx=(0, 0))
         card_in.columnconfigure(0, weight=1)
 
         ttk.Label(card_in, text="Entrées (fréquences variateur)", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
@@ -1031,16 +1095,10 @@ class FourApp(tk.Tk):
         ttk.Button(btns, text="↺ Réinitialiser", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2, sticky="w")
         ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
 
-        ttk.Separator(card_in, style="Dark.TSeparator").pack(fill="x", pady=(12, 10))
-        presets = ttk.Frame(card_in, style="CardInner.TFrame")
-        presets.pack(fill="x", pady=(0, 8))
-        ttk.Label(presets, text="Valeurs rapides", style="Subtle.TLabel").pack(anchor="w")
-        chips = ttk.Frame(presets, style="CardInner.TFrame")
-        chips.pack(anchor="w", pady=(6, 0))
-        for name, values in PRESET_VALUES:
-            ttk.Button(chips, text=name, style="Chip.TButton", command=lambda v=values: self._apply_preset(v)).pack(side="left", padx=(0, 8), pady=2)
+        self.details = Collapsible(body.inner, title="Détails résultats & analyse", open=False)
+        self.details.pack(fill="x", padx=18, pady=(8, 0))
 
-        card_out = self._card(top, side="left", fill="both", expand=True, padx=(8, 0))
+        card_out = self._card(self.details.body, fill="both", expand=True)
         card_out.columnconfigure(0, weight=1)
         ttk.Label(card_out, text="Résultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
         self.lbl_total_big = ttk.Label(card_out, text="Temps total (interp. exacte) : --", style="Result.TLabel")
@@ -1111,37 +1169,6 @@ class FourApp(tk.Tk):
             ttk.Label(row, text=name, style="ParamName.TLabel").pack(side="left")
             ttk.Label(row, text=value, style="ParamValue.TLabel").pack(side="left", padx=(12, 0))
 
-        pcard = self._card(body.inner, fill="x", expand=False, padx=18, pady=8, padding=(24, 20))
-        ttk.Label(
-            pcard,
-            text="Barres de chargement (temps réel, 3 cellules)",
-            style="CardHeading.TLabel",
-        ).pack(anchor="w", pady=(0, 12))
-        self.lbl_bars_info = ttk.Label(pcard, text="", style="Hint.TLabel", wraplength=900, justify="left")
-        self.lbl_bars_info.pack(anchor="w", pady=(0, 8))
-        self._responsive_labels.append((self.lbl_bars_info, 0.85))
-        pcard.bind("<Configure>", self._on_resize_wrapping)
-
-        self.bars = []
-        self.bar_texts = []
-        self.stage_status = []
-
-        for i in range(3):
-            holder = ttk.Frame(pcard, style="CardInner.TFrame")
-            holder.pack(fill="x", pady=10)
-            title_row = ttk.Frame(holder, style="CardInner.TFrame")
-            title_row.pack(fill="x")
-            ttk.Label(title_row, text=f"Tapis {i+1}", style="Card.TLabel").pack(side="left")
-            status_lbl = ttk.Label(title_row, text="⏳ En attente", style="BadgeIdle.TLabel")
-            status_lbl.pack(side="left", padx=(12, 0))
-            bar = SegmentedBar(holder, height=30)
-            bar.pack(fill="x", expand=True, pady=(8, 4))
-            txt = ttk.Label(holder, text="En attente", style="Status.TLabel", anchor="w", wraplength=860)
-            txt.pack(anchor="w")
-            self.stage_status.append(status_lbl)
-            self.bars.append(bar)
-            self.bar_texts.append(txt)
-
         footer = ttk.Frame(body.inner, style="TFrame")
         footer.pack(fill="x", padx=18, pady=(0, 16))
         ttk.Label(
@@ -1153,6 +1180,19 @@ class FourApp(tk.Tk):
         self._reset_kpis()
         self._reset_stat_cards()
         self._reset_stage_statuses()
+
+    def set_operator_mode(self, on: bool):
+        self.operator_mode = bool(on)
+        if hasattr(self, "details"):
+            try:
+                self.details.set_open(not self.operator_mode)
+            except Exception:
+                pass
+        if hasattr(self, "mode_button"):
+            if self.operator_mode:
+                self.mode_button.config(text="Mode ingénieur")
+            else:
+                self.mode_button.config(text="Mode opérateur")
 
     # ---------- Actions ----------
     def on_reset(self):
