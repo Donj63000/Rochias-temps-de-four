@@ -2,8 +2,12 @@
 # Four 3 tapis — TEMPS RÉEL + barres segmentées (3 cellules) + calibrage Ancrage‑4
 # Auteur : ChatGPT (pour Val) — 2025
 
-import math, os, time, tkinter as tk
-from tkinter import ttk, messagebox
+import math, os, sys, time, tkinter as tk
+import ctypes
+import csv
+import json
+from pathlib import Path
+from tkinter import ttk
 from tkinter import scrolledtext, filedialog  # pour la fenêtre Explications
 
 # ---- numpy pour l'algèbre ----
@@ -115,7 +119,7 @@ PRESET_VALUES = [
     ("Ancre A", ("9000", "9000", "9000")),
     ("Tapis 1 lent", ("5000", "9000", "9000")),
     ("Tapis 3 lent", ("9000", "9000", "5000")),
-    ("Equilibre", ("6500", "7200", "7800")),
+    ("Équilibre", ("6500", "7200", "7800")),
 ]
 
 # ================== Utilitaires ==================
@@ -165,7 +169,9 @@ FILL             = ACCENT
 TRACK            = "#dcfce7"
 GLOW             = "#86efac"
 
-TICK_SECONDS = 1.0  # mise à jour 1 s (temps réel)
+TICK_SECONDS = 0.5  # mise à jour 0,5 s pour une animation plus fluide
+PREFS_PATH = Path.home() / ".four3_prefs.json"
+DEFAULT_INPUTS = ("40.00", "50.00", "99.99")
 
 # ================== Conteneur scrollable vertical ==================
 class VScrollFrame(ttk.Frame):
@@ -211,10 +217,10 @@ class SegmentedBar(tk.Canvas):
     Barre de progression custom :
       - fond sombre
       - remplissage coloré
-      - 2 traits rouges verticaux (1/3 et 2/3)
+      - repères verticaux configurables
     Méthodes :
-      - set_total(seconds)
-      - set_progress(seconds_elapsed)
+      - set_total_distance(distance)
+      - set_progress(distance_elapsed)
       - reset()
     """
     def __init__(self, master, height=22, **kwargs):
@@ -229,12 +235,17 @@ class SegmentedBar(tk.Canvas):
         self.height = height
         self.total = 0.0
         self.elapsed = 0.0
+        self.show_ticks = True
+        self._markers = [(1 / 3, "1/3"), (2 / 3, "2/3")]
         self.bind("<Configure>", lambda e: self.redraw())
 
-    def set_total(self, seconds: float):
-        self.total = max(0.0, float(seconds))
+    def set_total_distance(self, distance: float):
+        self.total = max(0.0, float(distance))
         self.elapsed = 0.0
         self.redraw()
+
+    # rétro-compatibilité
+    set_total = set_total_distance
 
     def set_progress(self, seconds_elapsed: float):
         self.elapsed = max(0.0, float(seconds_elapsed))
@@ -243,6 +254,19 @@ class SegmentedBar(tk.Canvas):
     def reset(self):
         self.total = 0.0
         self.elapsed = 0.0
+        self.redraw()
+
+    def set_markers(self, percentages, labels=None):
+        markers = []
+        if labels is None:
+            labels = ["" for _ in percentages]
+        for pct, text in zip(percentages, labels):
+            try:
+                pct_float = float(pct)
+            except (TypeError, ValueError):
+                continue
+            markers.append((pct_float, text))
+        self._markers = markers
         self.redraw()
 
     def redraw(self):
@@ -286,22 +310,78 @@ class SegmentedBar(tk.Canvas):
                 width=2,
             )
 
-        # Séparateurs rouges à 1/3 et 2/3 (toujours visibles)
-        if inner_width > 0:
-            x1 = track_left + inner_width / 3
-            x2 = track_left + 2 * inner_width / 3
-            self.create_line(int(x1), track_top, int(x1), track_bot, fill=RED, width=2)
-            self.create_line(int(x2), track_top, int(x2), track_bot, fill=RED, width=2)
+        # Repères (ticks)
+        if inner_width > 0 and self.show_ticks:
+            for pct, text in self._markers:
+                x = track_left + max(0.0, min(1.0, pct)) * inner_width
+                self.create_line(int(x), track_top, int(x), track_bot, fill=RED, width=2)
+                if text:
+                    self.create_text(
+                        int(x) + 2,
+                        track_top - 6,
+                        text=text,
+                        anchor="w",
+                        fill=SUBTEXT,
+                        font=("Consolas", 9),
+                    )
+
+
+class Tooltip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip = None
+        widget.bind("<Enter>", self.show)
+        widget.bind("<Leave>", self.hide)
+
+    def show(self, _event=None):
+        if self.tip is not None:
+            return
+        tip = tk.Toplevel(self.widget)
+        tip.overrideredirect(True)
+        try:
+            tip.attributes("-alpha", 0.95)
+        except Exception:
+            pass
+        tk.Label(tip, text=self.text, bg="#111111", fg="#ffffff", font=("Segoe UI", 9), padx=8, pady=4).pack()
+        tip.update_idletasks()
+        x = self.widget.winfo_rootx() + 12
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        tip.geometry(f"+{x}+{y}")
+        self.tip = tip
+
+    def hide(self, _event=None):
+        if self.tip is None:
+            return
+        try:
+            self.tip.destroy()
+        except Exception:
+            pass
+        self.tip = None
 
 # ================== Application ==================
 class FourApp(tk.Tk):
     def __init__(self):
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                try:
+                    ctypes.windll.user32.SetProcessDPIAware()
+                except Exception:
+                    pass
+
         super().__init__()
         self.title("Four • 3 Tapis — Calcul & Barres (Temps réel)")
         self.configure(bg=BG)
         # Tu peux garder la géométrie initiale si tu veux
         # self.geometry("1180x760")
         self.minsize(1100, 700)
+
+        self._toasts = []
+        self._cards = []
+        self._responsive_labels = []
+        self.compact_mode = False
 
         self._init_styles()
         self.option_add("*TButton.Cursor", "hand2")
@@ -332,12 +412,24 @@ class FourApp(tk.Tk):
         self.stage_rows = []
 
         self.logo_img = None
+        self._error_after = None
 
         self._load_logo()
 
         # UI
         self._build_ui()
+        self._set_default_inputs()
 
+        self.bind_all("<Return>", lambda e: self.on_calculer())
+        self.bind_all("<F5>", lambda e: self.on_start())
+        self.bind_all("<space>", lambda e: self.on_pause() if self.animating else None)
+        self.bind_all("<Control-r>", lambda e: self.on_reset())
+        self.bind_all("<F1>", lambda e: self.on_explanations())
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        self.after(0, self._auto_scaling)
+        self.after(0, self._load_prefs)
         # Ajuste la taille à ce que l'écran peut afficher, sans couper
         self.after(0, self._fit_to_screen)
 
@@ -348,6 +440,152 @@ class FourApp(tk.Tk):
         w = min(max(req_w, 1100), scr_w - 2 * margin)
         h = min(max(req_h, 700), scr_h - 2 * margin)
         self.geometry(f"{int(w)}x{int(h)}")
+
+    def _auto_scaling(self):
+        try:
+            dpi = self.winfo_fpixels("1i")
+        except Exception:
+            return
+        if dpi <= 0:
+            return
+        scale = dpi / 72.0
+        try:
+            self.call("tk", "scaling", scale)
+        except Exception:
+            pass
+
+    def _clear_toasts(self):
+        for tip in list(self._toasts):
+            try:
+                tip.destroy()
+            except Exception:
+                pass
+        self._toasts.clear()
+
+    def toast(self, message: str, ms=2000):
+        tip = tk.Toplevel(self)
+        tip.overrideredirect(True)
+        tip.configure(bg="#000000")
+        try:
+            tip.attributes("-alpha", 0.9)
+        except Exception:
+            pass
+        lbl = tk.Label(tip, text=message, bg="#000000", fg="#ffffff", font=("Segoe UI", 10), padx=12, pady=6)
+        lbl.pack()
+        tip.update_idletasks()
+        x = self.winfo_rootx() + 40
+        y = self.winfo_rooty() + 20
+        tip.geometry(f"+{x}+{y}")
+        tip.after(ms, tip.destroy)
+        def _cleanup(_=None):
+            if tip in self._toasts:
+                self._toasts.remove(tip)
+        tip.bind("<Destroy>", _cleanup)
+        self._toasts.append(tip)
+
+    def _clear_error(self):
+        if self._error_after is not None:
+            try:
+                self.after_cancel(self._error_after)
+            except Exception:
+                pass
+            self._error_after = None
+        if hasattr(self, "err_box"):
+            self.err_box.config(text="")
+
+    def _show_error(self, msg):
+        if not hasattr(self, "err_box"):
+            return
+        self._clear_error()
+        self.err_box.config(text=f"⚠ {msg}")
+        self._error_after = self.after(4000, self._clear_error)
+        try:
+            self.bell()
+        except Exception:
+            pass
+
+    def _validate_num(self, s: str) -> bool:
+        if s in ("", "."):
+            return True
+        try:
+            float(s.replace(",", "."))
+            return True
+        except ValueError:
+            try:
+                self.bell()
+            except Exception:
+                pass
+            return False
+
+    def _set_default_inputs(self):
+        for widget, value in zip((self.e1, self.e2, self.e3), DEFAULT_INPUTS):
+            widget.delete(0, tk.END)
+            widget.insert(0, value)
+
+    def _save_prefs(self):
+        data = dict(
+            geom=self.winfo_geometry(),
+            f1=self.e1.get(),
+            f2=self.e2.get(),
+            f3=self.e3.get(),
+            compact=self.compact_mode,
+        )
+        try:
+            PREFS_PATH.write_text(json.dumps(data), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _load_prefs(self):
+        if not PREFS_PATH.exists():
+            return
+        try:
+            data = json.loads(PREFS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        self.e1.delete(0, tk.END); self.e1.insert(0, data.get("f1", DEFAULT_INPUTS[0]))
+        self.e2.delete(0, tk.END); self.e2.insert(0, data.get("f2", DEFAULT_INPUTS[1]))
+        self.e3.delete(0, tk.END); self.e3.insert(0, data.get("f3", DEFAULT_INPUTS[2]))
+        if data.get("compact"):
+            self.set_density(True)
+        geom = data.get("geom")
+        if geom:
+            self.geometry(geom)
+
+    def _on_close(self):
+        self._save_prefs()
+        self._clear_toasts()
+        self.destroy()
+
+    def _on_resize_wrapping(self, event):
+        width = max(0, event.width)
+        for label, ratio in self._responsive_labels:
+            try:
+                label.configure(wraplength=int(width * ratio))
+            except Exception:
+                pass
+
+    def set_density(self, compact: bool):
+        compact = bool(compact)
+        self.compact_mode = compact
+        pad = (12, 8) if compact else (20, 16)
+        hero_value_size = 20 if compact else 22
+        card_heading_size = 13 if compact else 14
+        self.style.configure("CardHeading.TLabel", font=("Segoe UI Semibold", card_heading_size))
+        self.style.configure(
+            "HeroStatValue.TLabel",
+            font=("Segoe UI", hero_value_size, "bold"),
+        )
+        self.style.configure(
+            "HeroStatLabel.TLabel",
+            font=("Segoe UI Semibold", 9 if compact else 10),
+        )
+        for wrapper, inner in self._cards:
+            try:
+                inner.configure(padding=pad)
+            except Exception:
+                pass
+        if hasattr(self, "density_button"):
+            self.density_button.config(text="Mode confortable" if compact else "Mode compact")
 
     def _cancel_after(self):
         if getattr(self, "_after_id", None):
@@ -481,6 +719,22 @@ class FourApp(tk.Tk):
         )
 
         style.configure(
+            "Dark.TSpinbox",
+            fieldbackground=FIELD,
+            background=FIELD,
+            foreground=TEXT,
+            arrowsize=12,
+            bordercolor=BORDER,
+            insertcolor=TEXT,
+        )
+        style.map(
+            "Dark.TSpinbox",
+            fieldbackground=[("focus", FIELD_FOCUS)],
+            bordercolor=[("focus", ACCENT)],
+            foreground=[("disabled", SUBTEXT)],
+        )
+
+        style.configure(
             "Accent.TRadiobutton",
             background=CARD,
             foreground=TEXT,
@@ -547,6 +801,7 @@ class FourApp(tk.Tk):
         inner = ttk.Frame(wrapper, style="Card.TFrame", padding=padding)
         inner.pack(fill="both", expand=True)
         wrapper.pack(**pack_kwargs)
+        self._cards.append((wrapper, inner))
         return inner
 
     def _create_stat_card(self, parent, column, title, *, frame_style="StatCard.TFrame", title_style="StatTitle.TLabel", value_style="StatValue.TLabel", detail_style="StatDetail.TLabel"):
@@ -589,13 +844,13 @@ class FourApp(tk.Tk):
             return
         label = self.stage_status[index]
         mapping = {
-            "idle": ("En attente", "BadgeIdle.TLabel"),
-            "ready": ("Pret", "BadgeReady.TLabel"),
-            "active": ("En cours", "BadgeActive.TLabel"),
-            "done": ("Termine", "BadgeDone.TLabel"),
-            "pause": ("En pause", "BadgePause.TLabel"),
+            "idle": ("⏳ En attente", "BadgeIdle.TLabel"),
+            "ready": ("▶ Prêt", "BadgeReady.TLabel"),
+            "active": ("⏵ En cours", "BadgeActive.TLabel"),
+            "done": ("✓ Terminé", "BadgeDone.TLabel"),
+            "pause": ("⏸ En pause", "BadgePause.TLabel"),
         }
-        text_value, style_name = mapping.get(status, ("En attente", "BadgeIdle.TLabel"))
+        text_value, style_name = mapping.get(status, ("⏳ En attente", "BadgeIdle.TLabel"))
         label.config(text=text_value, style=style_name)
 
     def _update_kpi(self, key, main_text, detail_text="--"):
@@ -632,17 +887,24 @@ class FourApp(tk.Tk):
                 row=0, column=0, rowspan=2, sticky="nw", padx=(0, 20)
             )
 
-        title = ttk.Label(hero, text="Simulation four 3 tapis (temps reel)", style="HeroTitle.TLabel")
+        title = ttk.Label(hero, text="Simulation four 3 tapis (temps réel)", style="HeroTitle.TLabel")
         title.grid(row=0, column=1, sticky="w")
 
         badge_box = ttk.Frame(hero, style="CardInner.TFrame")
         badge_box.grid(row=0, column=2, sticky="e", padx=(12, 0))
-        ttk.Label(badge_box, text="Mode temps reel", style="BadgeReady.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Label(badge_box, text="Mode temps réel", style="BadgeReady.TLabel").pack(side="left", padx=(0, 8))
         ttk.Label(badge_box, text="Interpolation 12 points", style="BadgeNeutral.TLabel").pack(side="left")
+        self.density_button = ttk.Button(
+            badge_box,
+            text="Mode compact",
+            style="Chip.TButton",
+            command=lambda: self.set_density(not self.compact_mode),
+        )
+        self.density_button.pack(side="left", padx=(8, 0))
 
         subtitle = ttk.Label(
             hero,
-            text="Modele : T = d + K1/f1 + K2/f2 + K3/f3  (f = IHM/100). LS pour la repartition par tapis, interpolation exacte (12 essais) pour le temps total.",
+            text="Modèle : T = d + K1/f1 + K2/f2 + K3/f3  (f = IHM/100). LS pour la répartition par tapis, interpolation exacte (12 essais) pour le temps total.",
             style="HeroSub.TLabel",
             wraplength=760,
             justify="left",
@@ -651,7 +913,7 @@ class FourApp(tk.Tk):
 
         tagline = ttk.Label(
             hero,
-            text="Tableau de bord visuel pour suivre la cuisson et les tapis en parallele.",
+            text="Tableau de bord visuel pour suivre la cuisson et les tapis en parallèle.",
             style="Subtle.TLabel",
             wraplength=760,
             justify="left",
@@ -677,6 +939,10 @@ class FourApp(tk.Tk):
             detail = ttk.Label(pill, text="--", style="HeroStatDetail.TLabel")
             detail.pack(anchor="w", pady=(2, 0))
             self.kpi_labels[key] = (value, detail)
+        Tooltip(self.kpi_labels["total"][0], "Temps total corrigé par interpolation exacte (12 points)")
+        Tooltip(self.kpi_labels["t1"][0], "Durée estimée sur le tapis 1 (pondérée par α)")
+        Tooltip(self.kpi_labels["t2"][0], "Durée estimée sur le tapis 2 (pondérée par α)")
+        Tooltip(self.kpi_labels["t3"][0], "Durée estimée sur le tapis 3 (pondérée par α)")
 
         body = VScrollFrame(self)
         body.pack(fill="both", expand=True)
@@ -687,18 +953,49 @@ class FourApp(tk.Tk):
         card_in = self._card(top, side="left", fill="both", expand=True, padx=(0, 8))
         card_in.columnconfigure(0, weight=1)
 
-        ttk.Label(card_in, text="Entrees (frequences variateur)", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(card_in, text="Entrées (fréquences variateur)", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
         g = ttk.Frame(card_in, style="CardInner.TFrame")
         g.pack(fill="x", pady=(12, 6))
         g.columnconfigure(1, weight=1)
         ttk.Label(g, text="Tapis 1 : Hz =", style="Card.TLabel").grid(row=0, column=0, sticky="e", padx=(0, 12), pady=6)
-        self.e1 = ttk.Entry(g, width=12, font=("Consolas", 12), style="Dark.TEntry")
+        vcmd = (self.register(self._validate_num), "%P")
+        self.e1 = ttk.Spinbox(
+            g,
+            from_=1,
+            to=120,
+            increment=0.01,
+            format="%.2f",
+            width=10,
+            style="Dark.TSpinbox",
+            validate="key",
+            validatecommand=vcmd,
+        )
         self.e1.grid(row=0, column=1, sticky="w", pady=6)
         ttk.Label(g, text="Tapis 2 : Hz =", style="Card.TLabel").grid(row=1, column=0, sticky="e", padx=(0, 12), pady=6)
-        self.e2 = ttk.Entry(g, width=12, font=("Consolas", 12), style="Dark.TEntry")
+        self.e2 = ttk.Spinbox(
+            g,
+            from_=1,
+            to=120,
+            increment=0.01,
+            format="%.2f",
+            width=10,
+            style="Dark.TSpinbox",
+            validate="key",
+            validatecommand=vcmd,
+        )
         self.e2.grid(row=1, column=1, sticky="w", pady=6)
         ttk.Label(g, text="Tapis 3 : Hz =", style="Card.TLabel").grid(row=2, column=0, sticky="e", padx=(0, 12), pady=6)
-        self.e3 = ttk.Entry(g, width=12, font=("Consolas", 12), style="Dark.TEntry")
+        self.e3 = ttk.Spinbox(
+            g,
+            from_=1,
+            to=120,
+            increment=0.01,
+            format="%.2f",
+            width=10,
+            style="Dark.TSpinbox",
+            validate="key",
+            validatecommand=vcmd,
+        )
         self.e3.grid(row=2, column=1, sticky="w", pady=6)
 
         ttk.Label(
@@ -707,13 +1004,17 @@ class FourApp(tk.Tk):
             style="Hint.TLabel",
         ).pack(anchor="w", pady=(4, 12))
 
+        self.err_box = ttk.Label(card_in, text="", style="Hint.TLabel")
+        self.err_box.pack(anchor="w", pady=(0, 0))
+
         btns = ttk.Frame(card_in, style="CardInner.TFrame")
         btns.pack(fill="x", pady=(4, 8))
         btns.columnconfigure(4, weight=1)
-        ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton").grid(row=0, column=0, padx=(0, 12), pady=2, sticky="w")
+        self.btn_calculer = ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton")
+        self.btn_calculer.grid(row=0, column=0, padx=(0, 12), pady=2, sticky="w")
         self.btn_start = ttk.Button(
             btns,
-            text="Demarrer (temps reel)",
+            text="▶ Démarrer (temps réel)",
             command=self.on_start,
             state="disabled",
             style="Accent.TButton",
@@ -721,14 +1022,14 @@ class FourApp(tk.Tk):
         self.btn_start.grid(row=0, column=1, padx=(0, 12), pady=2, sticky="w")
         self.btn_pause = ttk.Button(
             btns,
-            text="Pause",
+            text="⏸ Pause",
             command=self.on_pause,
             state="disabled",
             style="Ghost.TButton",
         )
         self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2, sticky="w")
-        ttk.Button(btns, text="Reset", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2, sticky="w")
-        ttk.Button(btns, text="Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
+        ttk.Button(btns, text="↺ Réinitialiser", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2, sticky="w")
+        ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
 
         ttk.Separator(card_in, style="Dark.TSeparator").pack(fill="x", pady=(12, 10))
         presets = ttk.Frame(card_in, style="CardInner.TFrame")
@@ -741,9 +1042,14 @@ class FourApp(tk.Tk):
 
         card_out = self._card(top, side="left", fill="both", expand=True, padx=(8, 0))
         card_out.columnconfigure(0, weight=1)
-        ttk.Label(card_out, text="Resultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(card_out, text="Résultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
         self.lbl_total_big = ttk.Label(card_out, text="Temps total (interp. exacte) : --", style="Result.TLabel")
         self.lbl_total_big.pack(anchor="w", pady=(0, 10))
+
+        export_row = ttk.Frame(card_out, style="CardInner.TFrame")
+        export_row.pack(fill="x", pady=(0, 10))
+        ttk.Button(export_row, text="⬇ Export CSV", command=self.export_csv, style="Ghost.TButton").pack(side="left")
+        ttk.Button(export_row, text="🖨 Export PS", command=self.export_bars_ps, style="Ghost.TButton").pack(side="left", padx=(8, 0))
 
         stage_list = ttk.Frame(card_out, style="CardInner.TFrame")
         stage_list.pack(fill="x", pady=(0, 12))
@@ -762,11 +1068,11 @@ class FourApp(tk.Tk):
             self.stage_rows.append({"freq": freq_lbl, "time": time_lbl, "detail": detail_lbl})
 
         ttk.Separator(card_out, style="Dark.TSeparator").pack(fill="x", pady=8)
-        ttk.Label(card_out, text="Analyse modele", style="Subtle.TLabel").pack(anchor="w")
+        ttk.Label(card_out, text="Analyse modèle", style="Subtle.TLabel").pack(anchor="w")
         stats = ttk.Frame(card_out, style="CardInner.TFrame")
         stats.pack(fill="x", pady=(4, 16))
         stat_defs = [
-            ("ls", "Total LS (4 parametres)", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
+            ("ls", "Total LS (4 paramètres)", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
             ("sum", "Somme t_i (LS)", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
             ("alpha", "Facteur alpha", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
             ("delta", "Delta exact - LS", "StatCardAccent.TFrame", "StatTitleAccent.TLabel", "StatValueAccent.TLabel", "StatDetailAccent.TLabel"),
@@ -784,7 +1090,7 @@ class FourApp(tk.Tk):
 
         params = ttk.Frame(card_out, style="CardInner.TFrame")
         params.pack(fill="x", pady=(8, 0))
-        ttk.Label(params, text="Parametres de calibrage", style="Subtle.TLabel").pack(anchor="w")
+        ttk.Label(params, text="Paramètres de calibrage", style="Subtle.TLabel").pack(anchor="w")
         params_grid = ttk.Frame(params, style="CardInner.TFrame")
         params_grid.pack(anchor="w", pady=(4, 0))
         param_values = [
@@ -808,11 +1114,13 @@ class FourApp(tk.Tk):
         pcard = self._card(body.inner, fill="x", expand=False, padx=18, pady=8, padding=(24, 20))
         ttk.Label(
             pcard,
-            text="Barres de chargement (temps reel, 3 cellules)",
+            text="Barres de chargement (temps réel, 3 cellules)",
             style="CardHeading.TLabel",
         ).pack(anchor="w", pady=(0, 12))
         self.lbl_bars_info = ttk.Label(pcard, text="", style="Hint.TLabel", wraplength=900, justify="left")
         self.lbl_bars_info.pack(anchor="w", pady=(0, 8))
+        self._responsive_labels.append((self.lbl_bars_info, 0.85))
+        pcard.bind("<Configure>", self._on_resize_wrapping)
 
         self.bars = []
         self.bar_texts = []
@@ -824,7 +1132,7 @@ class FourApp(tk.Tk):
             title_row = ttk.Frame(holder, style="CardInner.TFrame")
             title_row.pack(fill="x")
             ttk.Label(title_row, text=f"Tapis {i+1}", style="Card.TLabel").pack(side="left")
-            status_lbl = ttk.Label(title_row, text="En attente", style="BadgeIdle.TLabel")
+            status_lbl = ttk.Label(title_row, text="⏳ En attente", style="BadgeIdle.TLabel")
             status_lbl.pack(side="left", padx=(12, 0))
             bar = SegmentedBar(holder, height=30)
             bar.pack(fill="x", expand=True, pady=(8, 4))
@@ -838,7 +1146,7 @@ class FourApp(tk.Tk):
         footer.pack(fill="x", padx=18, pady=(0, 16))
         ttk.Label(
             footer,
-            text="Astuce : lance un calcul pour activer la simulation en temps reel.",
+            text="Astuce : lance un calcul pour activer la simulation en temps réel.",
             style="Footer.TLabel",
         ).pack(anchor="w")
 
@@ -853,6 +1161,8 @@ class FourApp(tk.Tk):
         self.paused = False
         self.seg_idx = 0
         self.seg_start = 0.0
+        self._clear_error()
+        self._clear_toasts()
         for b, t in zip(self.bars, self.bar_texts):
             b.reset()
             t.config(text="En attente")
@@ -863,7 +1173,8 @@ class FourApp(tk.Tk):
         self.lbl_total_big.config(text="Temps total (interp. exacte) : --")
         self.lbl_bars_info.config(text="")
         self.btn_start.config(state="disabled")
-        self.btn_pause.config(state="disabled", text="Pause")
+        self.btn_pause.config(state="disabled", text="⏸ Pause")
+        self.btn_calculer.config(state="normal")
         self.seg_durations = [0.0, 0.0, 0.0]
         self.seg_distances = [0.0, 0.0, 0.0]
         self.seg_speeds = [0.0, 0.0, 0.0]
@@ -877,12 +1188,13 @@ class FourApp(tk.Tk):
         self._reset_stage_statuses()
 
     def on_calculer(self):
+        self._clear_error()
         try:
             f1 = parse_hz(self.e1.get()); f2 = parse_hz(self.e2.get()); f3 = parse_hz(self.e3.get())
             if f1 <= 0 or f2 <= 0 or f3 <= 0:
-                raise ValueError("Les frequences doivent etre > 0.")
+                raise ValueError("Les fréquences doivent être > 0.")
         except Exception as e:
-            messagebox.showerror("Entrees invalides", f"Saisie invalide : {e}")
+            self._show_error(f"Saisie invalide : {e}")
             return
 
         t1, t2, t3, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
@@ -893,10 +1205,10 @@ class FourApp(tk.Tk):
         t3_base = K3_DIST / f3
         sum_base = t1_base + t2_base + t3_base
         if sum_base <= 1e-9:
-            messagebox.showerror("Entrees invalides", "Somme des temps d'ancrage nulle.")
+            self._show_error("Somme des temps d'ancrage nulle.")
             return
         if T_exp <= 0:
-            messagebox.showerror("Temps modele <= 0", "Verifie les entrees et le calibrage.")
+            self._show_error("Temps modélisé ≤ 0 : vérifie les entrées et le calibrage.")
             return
 
         alpha = T_exp / sum_base
@@ -920,16 +1232,17 @@ class FourApp(tk.Tk):
             zip(self.seg_distances, self.seg_speeds, self.seg_durations)
         ):
             distance = max(1e-9, float(distance_eq))
-            self.bars[i].set_total(distance)
+            self.bars[i].set_total_distance(distance)
             self.bar_texts[i].config(
                 text=f"0.0% | vitesse {fi:.2f} Hz | 00:00:00 / {fmt_hms(duration)} | en attente"
             )
 
         delta_total = T_exp - T_LS
         info = (
-            f"Exact: {fmt_hms(T_exp * 60)} ({T_exp:.2f} min) | LS: {fmt_hms(T_LS * 60)} ({T_LS:.2f} min)\n"
-            f"Somme t_i (LS): {fmt_hms((t1 + t2 + t3) * 60)} ({(t1 + t2 + t3):.2f} min) | d={d:+.3f} min | alpha={alpha:.3f}\n"
-            f"Somme ancrage: {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
+            "→ Barre = distance équivalente parcourue (min·Hz) | vitesse = Hz réel | progression = distance parcourue / distance cible\n"
+            f"Exact : {fmt_hms(T_exp * 60)} ({T_exp:.2f} min) | LS : {fmt_hms(T_LS * 60)} ({T_LS:.2f} min)\n"
+            f"Σ t_i (LS) : {fmt_hms((t1 + t2 + t3) * 60)} ({(t1 + t2 + t3):.2f} min) | d = {d:+.3f} min | α = {alpha:.3f}\n"
+            f"Σ ancrage : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
         )
         self.lbl_bars_info.config(text=info)
 
@@ -940,7 +1253,7 @@ class FourApp(tk.Tk):
 
         self._update_stat_card("ls", f"{T_LS:.2f} min", fmt_hms(T_LS * 60))
         self._update_stat_card("sum", f"{sum_base:.2f} min", fmt_hms(sum_base * 60))
-        self._update_stat_card("alpha", f"{alpha:.3f}", f"{sum_base:.2f} -> {T_exp:.2f}")
+        self._update_stat_card("alpha", f"{alpha:.3f}", f"{sum_base:.2f} → {T_exp:.2f}")
         self._update_stat_card("delta", f"{delta_total:+.2f} min", fmt_hms(abs(delta_total) * 60))
 
         self._set_stage_status(0, "ready")
@@ -964,14 +1277,16 @@ class FourApp(tk.Tk):
         self.notified_exit = False
 
         self.btn_start.config(state="normal")
-        self.btn_pause.config(state="disabled")
+        self.btn_pause.config(state="disabled", text="⏸ Pause")
+        self.btn_calculer.config(state="normal")
 
     def on_start(self):
         if self.animating:
             return
         if sum(self.seg_durations) <= 0:
-            messagebox.showwarning("Calcul manquant", "Clique d'abord sur \"Calculer\".")
-            return
+            self.on_calculer()
+            if sum(self.seg_durations) <= 0:
+                return
         self.animating = True
         self.paused = False
         self.seg_idx = 0
@@ -980,7 +1295,9 @@ class FourApp(tk.Tk):
         self.notified_stage1 = False
         self.notified_stage2 = False
         self.notified_exit = False
-        self.btn_pause.config(state="normal", text="Pause")
+        self.btn_start.config(state="disabled")
+        self.btn_pause.config(state="normal", text="⏸ Pause")
+        self.btn_calculer.config(state="disabled")
         self._set_stage_status(0, "active")
         self._set_stage_status(1, "ready")
         self._set_stage_status(2, "idle")
@@ -994,20 +1311,18 @@ class FourApp(tk.Tk):
             self.paused = True
             self.pause_t0 = time.perf_counter()
             self._cancel_after()
-            self.btn_pause.config(text="Reprendre")
+            self.btn_pause.config(text="▶ Reprendre")
             self._set_stage_status(self.seg_idx, "pause")
         else:
             delta = time.perf_counter() - self.pause_t0
             self.seg_start += delta
             self.paused = False
-            self.btn_pause.config(text="Pause")
+            self.btn_pause.config(text="⏸ Pause")
             self._set_stage_status(self.seg_idx, "active")
             self._tick()
 
     def _tick(self):
-        if not self.animating:
-            return
-        if self.paused:
+        if not self.animating or self.paused:
             return
 
         i = self.seg_idx
@@ -1021,10 +1336,7 @@ class FourApp(tk.Tk):
         total_remaining = max(0.0, remaining_current + remaining_future)
         if (not self.notified_exit and self.total_duration > 5 * 60 and total_remaining <= 5 * 60):
             self.notified_exit = True
-            try:
-                messagebox.showinfo("Notification", "Le produit va sortir du four")
-            except Exception:
-                pass
+            self.toast("Le produit va sortir du four (≤ 5 min)")
         distance_parcourue = max(0.0, vitesse * (elapsed / 60.0))
         if distance_parcourue >= distance_totale:
             distance_parcourue = distance_totale
@@ -1035,32 +1347,28 @@ class FourApp(tk.Tk):
         if prog >= 1.0:
             self.bars[i].set_progress(distance_totale)
             self.bar_texts[i].config(
-                text=f"100% | vitesse {vitesse:.2f} Hz | {fmt_hms(dur)} / {fmt_hms(dur)} | termine"
+                text=f"100% | vitesse {vitesse:.2f} Hz | {fmt_hms(dur)} / {fmt_hms(dur)} | terminé"
             )
             if i == 0 and not self.notified_stage1:
-                try:
-                    messagebox.showinfo("Notification", "Le produit passe dans le tapis 2")
-                except Exception:
-                    pass
+                self.toast("Passage → Tapis 2")
                 self.notified_stage1 = True
             elif i == 1 and not self.notified_stage2:
-                try:
-                    messagebox.showinfo("Notification", "Le produit passe dans le tapis 3")
-                except Exception:
-                    pass
+                self.toast("Passage → Tapis 3")
                 self.notified_stage2 = True
             self._set_stage_status(i, "done")
             self.seg_idx += 1
             if self.seg_idx >= 3:
                 self.animating = False
-                self.btn_pause.config(state="disabled", text="Pause")
+                self.btn_pause.config(state="disabled", text="⏸ Pause")
+                self.btn_start.config(state="normal")
+                self.btn_calculer.config(state="normal")
                 return
             self.seg_start = now
             j = self.seg_idx
             vitesse_j = self.seg_speeds[j]
             duree_j = self.seg_durations[j]
             distance_j = max(1e-9, self.seg_distances[j])
-            self.bars[j].set_total(distance_j)
+            self.bars[j].set_total_distance(distance_j)
             self.bar_texts[j].config(
                 text=f"0.0% | vitesse {vitesse_j:.2f} Hz | 00:00:00 / {fmt_hms(duree_j)} | en cours"
             )
@@ -1077,6 +1385,50 @@ class FourApp(tk.Tk):
         )
 
         self._schedule_tick()
+
+    def export_csv(self):
+        calc = self.last_calc
+        if not calc:
+            self._show_error("Aucun calcul à exporter. Lance d'abord \"Calculer\".")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("Tous fichiers", "*.*")],
+            title="Exporter résultats",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f, delimiter=";")
+                for key, value in calc.items():
+                    writer.writerow([key, value])
+            self.toast(f"Export CSV : {path}")
+        except Exception as e:
+            self._show_error(f"Export CSV impossible : {e}")
+
+    def export_bars_ps(self):
+        if not self.bars:
+            self._show_error("Aucune barre à exporter.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".ps",
+            filetypes=[("PostScript", "*.ps"), ("Tous fichiers", "*.*")],
+            title="Exporter barres",
+        )
+        if not path:
+            return
+        base, ext = os.path.splitext(path)
+        saved = []
+        try:
+            for idx, canvas in enumerate(self.bars, 1):
+                target = path if len(self.bars) == 1 else f"{base}_{idx}{ext}"
+                canvas.postscript(file=target, colormode="color")
+                saved.append(target)
+        except Exception as e:
+            self._show_error(f"Export PS impossible : {e}")
+            return
+        self.toast("Export PS : " + "; ".join(saved))
 
 
 
@@ -1194,6 +1546,7 @@ class FourApp(tk.Tk):
         bar = ttk.Frame(win, style="TFrame"); bar.pack(fill="x", padx=12, pady=(0,12))
         def _copy():
             self.clipboard_clear(); self.clipboard_append(text)
+            self.toast("Explications copiées")
         def _export():
             path = filedialog.asksaveasfilename(
                 title="Exporter les explications",
@@ -1204,16 +1557,14 @@ class FourApp(tk.Tk):
                 try:
                     with open(path, "w", encoding="utf-8") as f:
                         f.write(text)
-                    messagebox.showinfo("Export", f"Explications exportées :\n{path}")
                 except Exception as e:
-                    messagebox.showerror("Export", f"Erreur d'export : {e}")
+                    self._show_error(f"Export TXT impossible : {e}")
+                else:
+                    self.toast(f"Export TXT : {path}")
         ttk.Button(bar, text="Copier dans le presse-papiers", command=_copy, style="Ghost.TButton").pack(side="left")
         ttk.Button(bar, text="Exporter en .txt", command=_export, style="Ghost.TButton").pack(side="left", padx=(8,0))
 
 # ---------- Lancement ----------
 if __name__ == "__main__":
     app = FourApp()
-    app.e1.insert(0, "40.00")   # 40 Hz
-    app.e2.insert(0, "50.00")   # 50 Hz
-    app.e3.insert(0, "99.99")   # 99.99 Hz
     app.mainloop()
