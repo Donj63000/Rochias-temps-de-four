@@ -10,6 +10,16 @@ from pathlib import Path
 from tkinter import ttk
 from tkinter import scrolledtext, filedialog  # pour la fenêtre Explications
 
+
+def resource_path(relative: str) -> Path:
+    """Retourne le chemin absolu d'une ressource en mode IDE ou PyInstaller."""
+
+    if hasattr(sys, "_MEIPASS") and getattr(sys, "_MEIPASS"):
+        base_path = Path(getattr(sys, "_MEIPASS"))
+    else:
+        base_path = Path(__file__).resolve().parent
+    return base_path / relative
+
 # ---- numpy pour l'algèbre ----
 try:
     import numpy as np
@@ -794,12 +804,12 @@ class FourApp(tk.Tk):
 
 
     def _load_logo(self):
-        path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "rochias.png")
-        if not os.path.exists(path):
+        path = resource_path("rochias.png")
+        if not path.exists():
             return
 
         try:
-            img = tk.PhotoImage(file=path)
+            img = tk.PhotoImage(file=str(path))
         except tk.TclError:
             return
 
