@@ -153,14 +153,14 @@ class SegmentedBar(tk.Canvas):
                     )
 
         if inner_width > 0 and self._cell_labels:
-            label_y = max(0, track_top - 6)
+            label_y = int((track_top + track_bot) / 2)
             for pct_value, text in self._cell_labels:
                 x_pos = track_left + max(0.0, min(1.0, pct_value)) * inner_width
                 self.create_text(
                     int(x_pos),
                     label_y,
                     text=text,
-                    anchor="s",
+                    anchor="center",
                     fill=SUBTEXT,
                     font=("Segoe UI Semibold", 9),
                 )
