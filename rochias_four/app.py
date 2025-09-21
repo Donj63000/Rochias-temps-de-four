@@ -986,18 +986,24 @@ class FourApp(tk.Tk):
             self._show_error("Temps modélisé ≤ 0 : vérifie les entrées et le calibrage.")
             return
 
-        # 2) Barres = durées locales (LS), indépendantes par tapis
-        t1s, t2s, t3s = t1_ls, t2_ls, t3_ls
-        self.seg_distances = [f1 * t1s, f2 * t2s, f3 * t3s]   # D_i = f_i * t_i  (min·Hz)
-        self.seg_speeds = [f1, f2, f3]
-        self.seg_durations = [t1s * 60.0, t2s * 60.0, t3s * 60.0]
-
-        # 3) (Diagnostic seulement) ancrages ABCD & alpha
+        # 2) (Diagnostic + répartition) ancrages ABCD & alpha
         t1_base = K1_DIST / f1
         t2_base = K2_DIST / f2
         t3_base = K3_DIST / f3
         sum_base = t1_base + t2_base + t3_base
         alpha_diag = T_exp / sum_base if sum_base > 1e-9 else float("nan")
+
+        if math.isfinite(alpha_diag) and alpha_diag > 0:
+            t1s = alpha_diag * t1_base
+            t2s = alpha_diag * t2_base
+            t3s = alpha_diag * t3_base
+        else:
+            # Fallback tolérant : on conserve la décomposition LS
+            t1s, t2s, t3s = t1_ls, t2_ls, t3_ls
+
+        self.seg_distances = [f1 * t1s, f2 * t2s, f3 * t3s]   # D_i = f_i * t_i  (min·Hz)
+        self.seg_speeds = [f1, f2, f3]
+        self.seg_durations = [t1s * 60.0, t2s * 60.0, t3s * 60.0]
 
         for row, freq, ts in zip(self.stage_rows, (f1, f2, f3), (t1s, t2s, t3s)):
             row["freq"].config(text=f"{freq:.2f} Hz")
