@@ -1431,6 +1431,13 @@ class FourApp(tk.Tk):
             "   - T (min) = d + K1/f1 + K2/f2 + K3/f3 (regression sur 12 essais).",
             "   - Une interpolation exacte ajuste le total pour coller aux mesures terrain.",
             "   - Les constantes K' viennent des essais ancrage A/B/C/D.",
+            "",
+            "7. Calcul de l'epaisseur de couche",
+            "   - On part de l'epaisseur entree h0 (champ Epaisseur amont, en cm).",
+            "   - On calcule les capacites u_i = f_i / K_i' pour chaque tapis (vitesse rapportee a la distance d'ancrage).",
+            "   - L'epaisseur apres tapis 2 vaut h2 = h0 x (u1/u2) et apres tapis 3 h3 = h0 x (u1/u3).",
+            "   - Les variations affichees correspondent a Δ12 = ((f1 x K2')/(f2 x K1') - 1) x 100 % et Δ23 = ((f2 x K3')/(f3 x K2') - 1) x 100 %.",
+            "   - Ainsi, si un tapis tourne plus vite qu'en amont, la couche s'affine proportionnellement; s'il tourne plus lentement elle s'epaissit.",
         ])
         text = "\n".join(lines)
 
