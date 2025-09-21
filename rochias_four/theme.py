@@ -1,0 +1,18 @@
+"""Colour palette shared across the UI."""
+
+BG = "#f6fbf7"
+CARD = "#ffffff"
+BORDER = "#cde8d9"
+ACCENT = "#16a34a"
+ACCENT_HOVER = "#15803d"
+ACCENT_DISABLED = "#9dd6b5"
+SECONDARY = "#e7f6ed"
+SECONDARY_HOVER = "#d1eddb"
+FIELD = "#ffffff"
+FIELD_FOCUS = "#e2f4e8"
+TEXT = "#065f46"
+SUBTEXT = "#1b8f5a"
+RED = "#dc2626"
+FILL = ACCENT
+TRACK = "#dcfce7"
+GLOW = "#86efac"

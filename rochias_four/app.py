@@ -1,395 +1,52 @@
-# four_3_tapis_app_realtime_v3.py
-# Four 3 tapis — TEMPS RÉEL + barres segmentées (3 cellules) + calibrage Ancrage‑4
-# Auteur : ChatGPT (pour Val) — 2025
+"""Main Tkinter application for the Rochias four dashboard."""
 
-import math, os, sys, time, tkinter as tk
+from __future__ import annotations
+
 import ctypes
 import csv
 import json
+import math
+import os
+import sys
+import time
+import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
-from tkinter import scrolledtext, filedialog  # pour la fenêtre Explications
+from tkinter import filedialog, scrolledtext, ttk
 
-# ---- numpy pour l'algèbre ----
-try:
-    import numpy as np
-except Exception as e:
-    raise SystemExit("Installe numpy : pip install numpy\n" + str(e))
-
-# ================== Données d'étalonnage (12 expériences) ==================
-def hm(h, m): return 60*h + m
-EXPS = [
-    (4000, 5000, 9000, hm(2,36)),  # 1
-    (4000, 5000, 8000, hm(3,11)),  # 2
-    (2500, 3500, 8500, hm(3,26)),  # 3
-    (8500, 4500, 4565, hm(4,30)),  # 4
-    (9000, 9000, 9000, hm(0,57)),  # 5  <-- ancre A
-    (9000, 9000, 5000, hm(3,18)),  # 6  <-- ancre D (tapis 3 lent)
-    (5000, 9000, 9000, hm(1,39)),  # 7  <-- ancre B (tapis 1 lent)
-    (9000, 5000, 9000, hm(1,43)),  # 8  <-- ancre C (tapis 2 lent)
-    (5951, 4567, 8777, hm(2,28)),  # 9
-    (5000, 2000, 3500, hm(6,13)),  # 10
-    (4000, 5000, 9000, hm(2,36)),  # 11
-    (4400, 5700, 9250, hm(2,24)),  # 12
-]
-
-# ================== Calibrages ==================
-def _X_row(T1, T2, T3):
-    # f = IHM/100 ; modèle linéaire en [1, 1/f1, 1/f2, 1/f3]
-    return [1.0, 100.0/T1, 100.0/T2, 100.0/T3]
-
-def calibrate_regression(exps):
-    """Régression globale (LS) sur les 12 essais."""
-    X = np.array([_X_row(*e[:3]) for e in exps], float)
-    y = np.array([e[3] for e in exps], float)
-    beta, *_ = np.linalg.lstsq(X, y, rcond=None)  # d, K1, K2, K3
-    d, K1, K2, K3 = beta.tolist()
-
-    yhat = X @ beta
-    resid = y - yhat
-    mae = float(np.mean(np.abs(resid)))
-    rmse = float(np.sqrt(np.mean(resid**2)))
-    ss_res = float(np.sum(resid**2))
-    ss_tot = float(np.sum((y - y.mean())**2))
-    r2 = 1.0 - ss_res/ss_tot if ss_tot > 0 else float("nan")
-    return (d, K1, K2, K3), {"MAE": mae, "RMSE": rmse, "R2": r2}
-
-# ================== Interpolation exacte (12 points) sur T ==================
-def _phi_features(f1, f2, f3):
-    # base en 1/f, termes quadratiques + interactions + qq cubiques
-    inv1, inv2, inv3 = 1.0/f1, 1.0/f2, 1.0/f3
-    return np.array([
-        1.0,
-        inv1, inv2, inv3,
-        inv1**2, inv2**2, inv3**2,
-        inv1*inv2, inv1*inv3, inv2*inv3,
-        inv1**3, inv3**3
-    ], float)
-
-def calibrate_interp12(exps):
-    """Interpole EXACTEMENT les 12 expériences: phi(f)^T theta = T."""
-    X = np.array([_phi_features(e[0]/100.0, e[1]/100.0, e[2]/100.0) for e in exps], float)
-    y = np.array([e[3] for e in exps], float)
-    theta, *_ = np.linalg.lstsq(X, y, rcond=None)  # SVD, stable numériquement
-    yhat = X @ theta
-    resid = y - yhat
-    mae = float(np.mean(np.abs(resid)))
-    rmse = float(np.sqrt(np.mean(resid**2)))
-    return theta, {"MAE": mae, "RMSE": rmse, "MAXABS": float(np.max(np.abs(resid)))}
-
-def predict_T_interp12(f1, f2, f3, theta):
-    return float(_phi_features(f1, f2, f3) @ theta)
-
-# --- Calibrage global (scientifique)
-PARAMS_REG, METRICS_REG = calibrate_regression(EXPS)
-D_R, K1_R, K2_R, K3_R = PARAMS_REG
+from .calibration import (
+    D_R,
+    K1_DIST,
+    K1_R,
+    K2_DIST,
+    K2_R,
+    K3_DIST,
+    K3_R,
+    METRICS_EXACT,
+    METRICS_REG,
+    THETA12,
+    compute_times,
+    predict_T_interp12,
+)
+from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS
+from .theme import (
+    ACCENT,
+    ACCENT_DISABLED,
+    ACCENT_HOVER,
+    BG,
+    BORDER,
+    CARD,
+    FIELD,
+    FIELD_FOCUS,
+    GLOW,
+    SECONDARY,
+    SECONDARY_HOVER,
+    SUBTEXT,
+    TEXT,
+)
+from .utils import fmt_hms, fmt_minutes, parse_hz
+from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
 
 
-def calibrate_anchor_from_ABCD(exps, ref_ihm=9000):
-    ref_hz = ref_ihm / 100.0
-    T_ref = next(
-        T for T1, T2, T3, T in exps if T1 == ref_ihm and T2 == ref_ihm and T3 == ref_ihm
-    )
-
-    def K_for_index(idx):
-        for T1, T2, T3, T in exps:
-            arr = [T1, T2, T3]
-            if sum(1 for v in arr if v == ref_ihm) == 2 and arr[idx] != ref_ihm:
-                f_var = arr[idx] / 100.0
-                delta = (1.0 / f_var) - (1.0 / ref_hz)
-                if abs(delta) <= 1e-12:
-                    raise RuntimeError("Delta nul pour l'index %d" % idx)
-                return (T - T_ref) / delta
-        raise RuntimeError("Essai d'ancrage manquant pour l'index %d" % idx)
-
-    K1 = K_for_index(0)
-    K2 = K_for_index(1)
-    K3 = K_for_index(2)
-    d = T_ref - (K1 + K2 + K3) / ref_hz
-    return K1, K2, K3, d
-
-
-K1_DIST, K2_DIST, K3_DIST, D_ANCH = calibrate_anchor_from_ABCD(EXPS)
-
-
-# --- Calibrage : theta_12 (exact sur la base de 12 points)
-THETA12, METRICS_EXACT = calibrate_interp12(EXPS)  # MAE ~ 1e-12 ici
-
-# ================== Utilitaires ==================
-def parse_hz(s: str) -> float:
-    """Accepte 40.00 (Hz) ou 4000 (IHM). >200 => IHM/100."""
-    s = (s or "").strip().replace(",", ".")
-    if not s:
-        raise ValueError("Champ vide")
-    f = float(s)
-    return (f/100.0) if f > 200.0 else f
-
-def fmt_minutes(m: float) -> str:
-    if m is None or not math.isfinite(m): return "—"
-    if m < 0: m = 0.0
-    sec = int(round(m*60))
-    h = sec // 3600; sec %= 3600
-    mn = sec // 60; ss = sec % 60
-    return f"{h}h {mn:02d}min {ss:02d}s" if h else f"{mn}min {ss:02d}s"
-
-def fmt_hms(seconds: float) -> str:
-    seconds = max(0, int(seconds + 0.5))
-    h = seconds // 3600; m = (seconds % 3600) // 60; s = seconds % 60
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
-def compute_times(f1, f2, f3):
-    """Retourne (t1,t2,t3,total_LS) en minutes avec la régression (LS) uniquement."""
-    d, K1, K2, K3 = D_R, K1_R, K2_R, K3_R
-    t1, t2, t3 = K1/f1, K2/f2, K3/f3         # convoyage “brut”
-    total_LS = d + t1 + t2 + t3              # total 4-paramètres
-    return t1, t2, t3, total_LS, (d, K1, K2, K3)
-
-# ================== Thème ==================
-BG               = "#f6fbf7"
-CARD             = "#ffffff"
-BORDER           = "#cde8d9"
-ACCENT           = "#16a34a"
-ACCENT_HOVER     = "#15803d"
-ACCENT_DISABLED  = "#9dd6b5"
-SECONDARY        = "#e7f6ed"
-SECONDARY_HOVER  = "#d1eddb"
-FIELD            = "#ffffff"
-FIELD_FOCUS      = "#e2f4e8"
-TEXT             = "#065f46"
-SUBTEXT          = "#1b8f5a"
-RED              = "#dc2626"   # séparateurs fixes
-FILL             = ACCENT
-TRACK            = "#dcfce7"
-GLOW             = "#86efac"
-
-TICK_SECONDS = 0.5  # mise à jour 0,5 s pour une animation plus fluide
-PREFS_PATH = Path.home() / ".four3_prefs.json"
-DEFAULT_INPUTS = ("40.00", "50.00", "99.99")
-
-# ================== Conteneur scrollable vertical ==================
-class VScrollFrame(ttk.Frame):
-    """Cadre scrollable vertical pour empiler des cartes sans rien couper."""
-
-    def __init__(self, master, **kwargs):
-        super().__init__(master, **kwargs)
-        self.canvas = tk.Canvas(self, highlightthickness=0, bg=BG, bd=0)
-        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.vsb.set)
-        self.vsb.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
-
-        self.inner = ttk.Frame(self.canvas, style="TFrame")
-        self._inner_id = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-
-        # Ajuste la largeur du contenu à celle du canvas et met à jour la scrollregion
-        self.inner.bind("<Configure>", self._on_frame_configure)
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
-
-        # Molette (Windows/macOS) et boutons 4/5 (Linux)
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
-        self.canvas.bind_all("<Button-4>", self._on_mousewheel, add="+")
-        self.canvas.bind_all("<Button-5>", self._on_mousewheel, add="+")
-
-    def _on_frame_configure(self, event=None):
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-    def _on_canvas_configure(self, event):
-        # Force la largeur du cadre intérieur = largeur visible du canvas
-        self.canvas.itemconfigure(self._inner_id, width=event.width)
-
-    def _on_mousewheel(self, event):
-        # Normalise le défilement
-        if getattr(event, "delta", 0) > 0 or getattr(event, "num", None) == 4:
-            self.canvas.yview_scroll(-1, "units")
-        elif getattr(event, "delta", 0) < 0 or getattr(event, "num", None) == 5:
-            self.canvas.yview_scroll(+1, "units")
-
-# ================== Barre Canvas segmentée ==================
-class SegmentedBar(tk.Canvas):
-    """
-    Barre de progression custom :
-      - fond sombre
-      - remplissage coloré
-      - repères verticaux configurables
-    Méthodes :
-      - set_total_distance(distance)
-      - set_progress(distance_elapsed)
-      - reset()
-    """
-    def __init__(self, master, height=22, **kwargs):
-        super().__init__(
-            master,
-            bg=CARD,
-            highlightthickness=0,
-            bd=0,
-            height=height,
-            **kwargs,
-        )
-        self.height = height
-        self.total = 0.0
-        self.elapsed = 0.0
-        self.show_ticks = True
-        self._markers = [(1 / 3, "1/3"), (2 / 3, "2/3")]
-        self.bind("<Configure>", lambda e: self.redraw())
-
-    def set_total_distance(self, distance: float):
-        self.total = max(0.0, float(distance))
-        self.elapsed = 0.0
-        self.redraw()
-
-    # rétro-compatibilité
-    set_total = set_total_distance
-
-    def set_progress(self, seconds_elapsed: float):
-        self.elapsed = max(0.0, float(seconds_elapsed))
-        self.redraw()
-
-    def reset(self):
-        self.total = 0.0
-        self.elapsed = 0.0
-        self.redraw()
-
-    def set_markers(self, percentages, labels=None):
-        markers = []
-        if labels is None:
-            labels = ["" for _ in percentages]
-        for pct, text in zip(percentages, labels):
-            try:
-                pct_float = float(pct)
-            except (TypeError, ValueError):
-                continue
-            markers.append((pct_float, text))
-        self._markers = markers
-        self.redraw()
-
-    def redraw(self):
-        w = self.winfo_width() or 120
-        h = self.winfo_height() or self.height
-        self.delete("all")
-
-        r = h // 2
-        outer_top = max(0, r - 14)
-        outer_bot = min(h, r + 14)
-        self.create_rectangle(0, outer_top, w, outer_bot, fill=BORDER, outline=BORDER)
-
-        track_left = 4
-        track_right = max(track_left, w - 4)
-        track_top = max(outer_top + 2, r - 10)
-        track_bot = min(outer_bot - 2, r + 10)
-        self.create_rectangle(track_left, track_top, track_right, track_bot, fill=TRACK, outline=ACCENT, width=1)
-
-        pct = 0.0 if self.total <= 1e-9 else min(1.0, self.elapsed / self.total)
-        inner_width = max(0, track_right - track_left)
-        fill_w = 0
-        if pct > 0.0 and inner_width > 0:
-            fill_w = max(1, min(inner_width, math.ceil(pct * inner_width)))
-
-        if fill_w > 0:
-            fill_right = min(track_right, track_left + fill_w)
-            self.create_rectangle(
-                track_left,
-                track_top,
-                fill_right,
-                track_bot,
-                fill=FILL,
-                outline=FILL,
-            )
-            self.create_line(
-                track_left,
-                track_top,
-                fill_right,
-                track_top,
-                fill=GLOW,
-                width=2,
-            )
-
-        # Repères (ticks)
-        if inner_width > 0 and self.show_ticks:
-            for pct, text in self._markers:
-                x = track_left + max(0.0, min(1.0, pct)) * inner_width
-                self.create_line(int(x), track_top, int(x), track_bot, fill=RED, width=2)
-                if text:
-                    self.create_text(
-                        int(x) + 2,
-                        track_top - 6,
-                        text=text,
-                        anchor="w",
-                        fill=SUBTEXT,
-                        font=("Consolas", 9),
-                    )
-
-
-class Tooltip:
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tip = None
-        widget.bind("<Enter>", self.show)
-        widget.bind("<Leave>", self.hide)
-
-    def show(self, _event=None):
-        if self.tip is not None:
-            return
-        tip = tk.Toplevel(self.widget)
-        tip.overrideredirect(True)
-        try:
-            tip.attributes("-alpha", 0.95)
-        except Exception:
-            pass
-        tk.Label(tip, text=self.text, bg="#111111", fg="#ffffff", font=("Segoe UI", 9), padx=8, pady=4).pack()
-        tip.update_idletasks()
-        x = self.widget.winfo_rootx() + 12
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
-        tip.geometry(f"+{x}+{y}")
-        self.tip = tip
-
-    def hide(self, _event=None):
-        if self.tip is None:
-            return
-        try:
-            self.tip.destroy()
-        except Exception:
-            pass
-        self.tip = None
-
-# ================== Widgets réutilisables ==================
-class Collapsible(ttk.Frame):
-    """Cadre repliable type 'disclosure' (► / ▼)."""
-
-    def __init__(self, master, title="Détails", open=False):
-        super().__init__(master, style="CardInner.TFrame")
-        self._open = bool(open)
-        self._title = title
-        hdr = ttk.Frame(self, style="CardInner.TFrame")
-        hdr.pack(fill="x")
-        self._btn = ttk.Button(
-            hdr,
-            text=self._label_text(),
-            style="Ghost.TButton",
-            command=self.toggle,
-            padding=(8, 4),
-        )
-        self._btn.pack(side="left")
-        self.body = ttk.Frame(self, style="CardInner.TFrame")
-        if self._open:
-            self.body.pack(fill="both", expand=True, pady=(6, 0))
-
-    def _label_text(self):
-        return ("▼ " if self._open else "► ") + self._title
-
-    def toggle(self):
-        self._open = not self._open
-        self._btn.config(text=self._label_text())
-        if self._open:
-            self.body.pack(fill="both", expand=True, pady=(6, 0))
-        else:
-            self.body.forget()
-
-    def set_open(self, open_: bool):
-        if bool(open_) != self._open:
-            self.toggle()
-
-# ================== Application ==================
 class FourApp(tk.Tk):
     def __init__(self):
         if sys.platform == "win32":
@@ -794,12 +451,12 @@ class FourApp(tk.Tk):
 
 
     def _load_logo(self):
-        path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "rochias.png")
-        if not os.path.exists(path):
+        path = Path(__file__).with_name("rochias.png")
+        if not path.exists():
             return
 
         try:
-            img = tk.PhotoImage(file=path)
+            img = tk.PhotoImage(file=str(path))
         except tk.TclError:
             return
 
@@ -1005,6 +662,10 @@ class FourApp(tk.Tk):
             status_lbl.pack(side="left", padx=(12, 0))
             bar = SegmentedBar(holder, height=30)
             bar.pack(fill="x", expand=True, pady=(8, 4))
+            bar.set_markers([1 / 3, 2 / 3], ["", ""])
+            first_cell = (i * 3) + 1
+            cell_labels = [((2 * j + 1) / 6, f"Cellule {first_cell + j}") for j in range(3)]
+            bar.set_cell_labels(cell_labels)
             txt = ttk.Label(holder, text="En attente", style="Status.TLabel", anchor="w", wraplength=860)
             txt.pack(anchor="w")
             self.stage_status.append(status_lbl)
@@ -1228,6 +889,10 @@ class FourApp(tk.Tk):
         self._reset_stage_statuses()
 
     def on_calculer(self):
+        if self.animating or self.paused:
+            self.on_reset()
+        else:
+            self._cancel_after()
         self._clear_error()
         try:
             f1 = parse_hz(self.e1.get()); f2 = parse_hz(self.e2.get()); f3 = parse_hz(self.e3.get())
@@ -1499,75 +1164,101 @@ class FourApp(tk.Tk):
                     T_LS=T_LS, T_exp=T_exp, alpha=alpha,
                     sum_t=t1 + t2 + t3,
                     sum_base=sum_base,
+                    delta=T_exp - T_LS,
                     K1_dist=K1_DIST, K2_dist=K2_DIST, K3_dist=K3_DIST,
                 )
         except Exception:
             pass
 
         # Construire le texte d'explication
-        lines = []
-        lines.append("EXPlications détaillées — Modèle du four (3 tapis)\n")
-        lines.append("1) Modèle mathématique\n")
-        lines.append("   T = d + K1/f1 + K2/f2 + K3/f3\n")
-        lines.append("   • f_i : fréquence variateur (Hz) — si l’IHM affiche 4000, on prend f=40.00 Hz (IHM/100)\n")
-        lines.append("   • K_i : constantes (min·Hz) — longueur équivalente/chemin thermique du tapis i\n")
-        lines.append("   • d   : intercepte global (min) — capte les effets non linéaires/constantes (chevauchements, zones fixes, etc.)\n")
-        lines.append("")
+        def _as_float(value):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return float("nan")
+
+        def _fmt_val(value, unit=" min"):
+            return f"{value:.2f}{unit}" if math.isfinite(value) else "n/a"
+
         if calc:
-            f1, f2, f3 = calc['f1'], calc['f2'], calc['f3']
-            K1, K2, K3 = calc['K1'], calc['K2'], calc['K3']
-            d = calc['d']
-            t1, t2, t3 = calc['t1'], calc['t2'], calc['t3']
-            t1_base = calc.get('t1_base', K1_DIST / f1)
-            t2_base = calc.get('t2_base', K2_DIST / f2)
-            t3_base = calc.get('t3_base', K3_DIST / f3)
-            t1s = calc.get('t1_star', float('nan'))
-            t2s = calc.get('t2_star', float('nan'))
-            t3s = calc.get('t3_star', float('nan'))
-            T_LS = calc.get('T_LS', t1 + t2 + t3 + d)
-            T_exp = calc.get('T_exp', predict_T_interp12(f1, f2, f3, THETA12))
-            sum_t = calc.get('sum_t', t1 + t2 + t3)
-            sum_base = calc.get('sum_base', t1_base + t2_base + t3_base)
-            alpha = calc.get('alpha', (T_exp / sum_base if sum_base > 0 else float('nan')))
-
-            lines.append("2) Données calculées (en minutes)")
-            lines.append(f"   Paramètres (LS) : d = {d:+.3f} min ;  K1 = {K1:.3f} ; K2 = {K2:.3f} ; K3 = {K3:.3f} (min·Hz)")
-            lines.append(f"   Entrées : f1 = {f1:.2f} Hz ; f2 = {f2:.2f} Hz ; f3 = {f3:.2f} Hz")
-            lines.append(f"   Temps convoyage pur : t1 = {t1:.3f} ; t2 = {t2:.3f} ; t3 = {t3:.3f}  (Σt = {sum_t:.3f})")
-            lines.append(f"   Total LS 4-paramètres : T_LS = {T_LS:.3f} min ({fmt_hms(T_LS*60)})")
-            lines.append(f"   Total corrigé (interp. exacte 12 pts) : T = {T_exp:.3f} min ({fmt_hms(T_exp*60)})")
-            lines.append("")
-            lines.append("3) Constantes d'ancrage (tapis isolés)")
-            lines.append(
-                f"   • K1' = {K1_DIST:.2f} ; K2' = {K2_DIST:.2f} ; K3' = {K3_DIST:.2f} (min·Hz) — issus des essais A/B/C/D"
-            )
-            lines.append(
-                f"   • Durées brutes : t1' = {t1_base:.3f} ; t2' = {t2_base:.3f} ; t3' = {t3_base:.3f}  (Σt' = {sum_base:.3f})"
-            )
-            lines.append("")
-            lines.append("4) Répartition utilisée dans l'appli")
-            lines.append("   • Total exact : interpolation 12 pts (voir ci-dessus)")
-            if math.isfinite(alpha):
-                lines.append(f"   • Facteur α = {alpha:.6f} = T / Σt'")
-                lines.append(f"     → t1* = {t1s:.3f} min ({fmt_hms(t1s*60)})")
-                lines.append(f"     → t2* = {t2s:.3f} min ({fmt_hms(t2s*60)})")
-                lines.append(f"     → t3* = {t3s:.3f} min ({fmt_hms(t3s*60)})")
-            else:
-                lines.append("   • Facteur α non défini (division par 0)")
-            lines.append("")
-            lines.append("5) Interprétation des barres (Canvas)")
-            lines.append("   • On anime une « distance » D_i (min·Hz) parcourue à la vitesse f_i (Hz) :")
-            lines.append("       distance_parcourue = f_i · (temps_écoulé / 60)")
-            lines.append("       fin de la barre quand distance_parcourue ≥ D_i")
-            lines.append("   • Pour durer t_i*, on prend D_i = α · K_i' ; durée = (D_i/f_i)·60 = α·(K_i'/f_i)·60 = t_i*·60.")
-            lines.append("")
-            lines.append("6) Méthode et précision")
-            lines.append("   • Régression globale (LS) : moindres carrés sur les 12 essais pour estimer d et K_i.")
-            lines.append("   • Interpolation exacte (12 pts) : corrige T pour retrouver les durées mesurées sur la base.")
-            lines.append("   • Répartition : ancrage A/B/C/D → ratios réalistes, puis α pour recoller au total exact.")
+            f1 = _as_float(calc.get("f1"))
+            f2 = _as_float(calc.get("f2"))
+            f3 = _as_float(calc.get("f3"))
+            T_LS = _as_float(calc.get("T_LS"))
+            T_exp = _as_float(calc.get("T_exp"))
+            alpha = _as_float(calc.get("alpha"))
+            t1_base = _as_float(calc.get("t1_base"))
+            t2_base = _as_float(calc.get("t2_base"))
+            t3_base = _as_float(calc.get("t3_base"))
+            t1s = _as_float(calc.get("t1_star"))
+            t2s = _as_float(calc.get("t2_star"))
+            t3s = _as_float(calc.get("t3_star"))
+            sum_base = _as_float(calc.get("sum_base"))
+            delta_total = _as_float(calc.get("delta"))
+            if not math.isfinite(delta_total) and math.isfinite(T_exp) and math.isfinite(T_LS):
+                delta_total = T_exp - T_LS
+            alpha_values = [t1s, t2s, t3s]
+            sum_alpha = sum(alpha_values) if all(math.isfinite(v) for v in alpha_values) else float("nan")
         else:
-            lines.append("Aucun calcul disponible. Lancez « Calculer » pour générer les valeurs spécifiques (f1,f2,f3, t_i, T, α).")
+            f1 = f2 = f3 = float("nan")
+            T_LS = T_exp = alpha = sum_base = delta_total = float("nan")
+            t1_base = t2_base = t3_base = float("nan")
+            t1s = t2s = t3s = float("nan")
+            sum_alpha = float("nan")
 
+        if calc and all(math.isfinite(v) for v in (f1, f2, f3)):
+            freq_line = f"   - Frequences tapis : f1 = {f1:.2f} Hz | f2 = {f2:.2f} Hz | f3 = {f3:.2f} Hz"
+        elif calc:
+            freq_line = "   - Frequences tapis : valeurs indisponibles"
+        else:
+            freq_line = "   - Pas encore de calcul (appuie sur Calculer)"
+
+        lines = [
+            "GUIDE SIMPLIFIE - MODELE FOUR 3 TAPIS",
+            "",
+            "1. Entrees saisies",
+            freq_line,
+            "",
+        ]
+        if calc:
+            delta_text = f"{delta_total:+.2f} min" if math.isfinite(delta_total) else "n/a"
+            sum_base_text = _fmt_val(sum_base)
+            sum_alpha_text = _fmt_val(sum_alpha)
+            alpha_text = f"{alpha:.3f}" if math.isfinite(alpha) else "n/a"
+            lines.extend([
+                "2. Resume minute",
+                f"   - Temps exact (12 points) : {fmt_minutes(T_exp)} ({fmt_hms(T_exp * 60)})",
+                f"   - Total LS (modele lineaire) : {fmt_minutes(T_LS)} ({fmt_hms(T_LS * 60)})",
+                f"   - Ecart exact vs LS : {delta_text}",
+                "",
+                "3. Durees par tapis",
+                f"   - Tapis 1 : {fmt_minutes(t1s)} | {_fmt_val(t1s)} (base : {_fmt_val(t1_base)})",
+                f"   - Tapis 2 : {fmt_minutes(t2s)} | {_fmt_val(t2s)} (base : {_fmt_val(t2_base)})",
+                f"   - Tapis 3 : {fmt_minutes(t3s)} | {_fmt_val(t3s)} (base : {_fmt_val(t3_base)})",
+                "",
+                "4. Comment lire les barres",
+                f"   - Alpha = {alpha_text} (facteur d'equilibrage)",
+                "   - Chaque barre represente une distance D_i = alpha x K_i' parcourue a la vitesse f_i",
+                "   - Quand la barre atteint 100 %, le tapis a termine son passage",
+                "",
+                "5. Verifications rapides",
+                f"   - Somme base : {sum_base_text} | Somme alpha : {sum_alpha_text}",
+                f"   - Constantes K' : K1'={K1_DIST:.1f} | K2'={K2_DIST:.1f} | K3'={K3_DIST:.1f}",
+            ])
+        else:
+            lines.extend([
+                "2. Comment ca marche ?",
+                "   - Saisis les frequences (affichage variateur ou IHM/100).",
+                "   - Clique sur Calculer pour generer les indicateurs et activer la simulation.",
+                "   - Les barres se lancent ensuite via le bouton Demarrer.",
+            ])
+        lines.extend([
+            "",
+            "6. Rappels modele",
+            "   - T (min) = d + K1/f1 + K2/f2 + K3/f3 (regression sur 12 essais).",
+            "   - Une interpolation exacte ajuste le total pour coller aux mesures terrain.",
+            "   - Les constantes K' viennent des essais ancrage A/B/C/D.",
+        ])
         text = "\n".join(lines)
 
         # Fenêtre modale
@@ -1604,7 +1295,10 @@ class FourApp(tk.Tk):
         ttk.Button(bar, text="Copier dans le presse-papiers", command=_copy, style="Ghost.TButton").pack(side="left")
         ttk.Button(bar, text="Exporter en .txt", command=_export, style="Ghost.TButton").pack(side="left", padx=(8,0))
 
-# ---------- Lancement ----------
-if __name__ == "__main__":
+
+def main() -> None:
     app = FourApp()
     app.mainloop()
+
+
+__all__ = ["FourApp", "main"]
