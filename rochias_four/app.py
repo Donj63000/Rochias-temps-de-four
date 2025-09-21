@@ -91,7 +91,7 @@ class FourApp(tk.Tk):
         self.seg_distances = [0.0, 0.0, 0.0]   # longueurs équivalentes (K1,K2,K3)
         self.seg_speeds = [0.0, 0.0, 0.0]      # vitesses (Hz) des 3 tapis
         self._after_id = None       # gestion propre du timer Tk
-        self.alpha = 1.0            # facteur d’échelle des barres : T / (t1+t2+t3)
+        self.alpha = 1.0            # facteur d’échelle diag (Σ ancrage → T_exact)
         self.last_calc = None       # stockage du dernier calcul pour Explications
         self.total_duration = 0.0
         self.notified_stage1 = False
@@ -978,24 +978,22 @@ class FourApp(tk.Tk):
             self._show_error(f"Saisie invalide : {e}")
             return
 
-        t1, t2, t3, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
+        t1_ls, t2_ls, t3_ls, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
         T_exp = predict_T_interp12(f1, f2, f3, THETA12)
 
         t1_base = K1_DIST / f1
         t2_base = K2_DIST / f2
         t3_base = K3_DIST / f3
         sum_base = t1_base + t2_base + t3_base
-        if sum_base <= 1e-9:
-            self._show_error("Somme des temps d'ancrage nulle.")
-            return
         if T_exp <= 0:
             self._show_error("Temps modélisé ≤ 0 : vérifie les entrées et le calibrage.")
             return
 
-        alpha = T_exp / sum_base
-        t1s = alpha * t1_base
-        t2s = alpha * t2_base
-        t3s = alpha * t3_base
+        alpha_diag = T_exp / sum_base if sum_base > 1e-9 else float("nan")
+
+        t1s = t1_ls
+        t2s = t2_ls
+        t3s = t3_ls
 
         for row, freq, ts in zip(self.stage_rows, (f1, f2, f3), (t1s, t2s, t3s)):
             row["freq"].config(text=f"{freq:.2f} Hz")
@@ -1004,8 +1002,8 @@ class FourApp(tk.Tk):
 
         self.lbl_total_big.config(text=f"Temps total (interp. exacte) : {fmt_minutes(T_exp)} | {fmt_hms(T_exp * 60)}")
 
-        self.alpha = alpha
-        self.seg_distances = [alpha * K1_DIST, alpha * K2_DIST, alpha * K3_DIST]
+        self.alpha = alpha_diag
+        self.seg_distances = [f1 * t1s, f2 * t2s, f3 * t3s]
         self.seg_speeds = [f1, f2, f3]
         self.seg_durations = [t1s * 60.0, t2s * 60.0, t3s * 60.0]
 
@@ -1055,10 +1053,9 @@ class FourApp(tk.Tk):
 
         delta_total = T_exp - T_LS
         info = (
-            "→ Barre = distance équivalente parcourue (min·Hz) | vitesse = Hz réel | progression = distance parcourue / distance cible\n"
-            f"Exact : {fmt_hms(T_exp * 60)} ({T_exp:.2f} min) | LS : {fmt_hms(T_LS * 60)} ({T_LS:.2f} min)\n"
-            f"Σ t_i (LS) : {fmt_hms((t1 + t2 + t3) * 60)} ({(t1 + t2 + t3):.2f} min) | d = {d:+.3f} min | α = {alpha:.3f}\n"
-            f"Σ ancrage : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
+            "→ Barres = durées locales indépendantes (LS) : t_i = K_i/f_i | cibles D_i = f_i·t_i pour finir à 100% exactement à t_i\n"
+            f"Exact (interp. 12 pts) : {fmt_hms(T_exp * 60)} ({T_exp:.2f} min) | LS total : {fmt_hms(T_LS * 60)} ({T_LS:.2f} min)\n"
+            f"Σ ancrage (ABCD) : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | α (diag) = {alpha_diag:.3f} | K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
         )
         self.lbl_analysis_info.config(text=info)
 
@@ -1069,7 +1066,7 @@ class FourApp(tk.Tk):
 
         self._update_stat_card("ls", f"{T_LS:.2f} min", fmt_hms(T_LS * 60))
         self._update_stat_card("sum", f"{sum_base:.2f} min", fmt_hms(sum_base * 60))
-        self._update_stat_card("alpha", f"{alpha:.3f}", f"{sum_base:.2f} → {T_exp:.2f}")
+        self._update_stat_card("alpha", f"{alpha_diag:.3f}", f"{sum_base:.2f} → {T_exp:.2f}")
         self._update_stat_card("delta", f"{delta_total:+.2f} min", fmt_hms(abs(delta_total) * 60))
 
         self._set_stage_status(0, "ready")
@@ -1079,11 +1076,11 @@ class FourApp(tk.Tk):
         self.last_calc = dict(
             f1=f1, f2=f2, f3=f3,
             d=d, K1=K1, K2=K2, K3=K3,
-            t1=t1, t2=t2, t3=t3,
+            t1=t1_ls, t2=t2_ls, t3=t3_ls,
             t1_base=t1_base, t2_base=t2_base, t3_base=t3_base,
             t1_star=t1s, t2_star=t2s, t3_star=t3s,
-            T_LS=T_LS, T_exp=T_exp, alpha=alpha,
-            sum_t=t1 + t2 + t3, sum_base=sum_base, delta=delta_total,
+            T_LS=T_LS, T_exp=T_exp, alpha=alpha_diag,
+            sum_t=t1_ls + t2_ls + t3_ls, sum_base=sum_base, delta=delta_total,
             K1_dist=K1_DIST, K2_dist=K2_DIST, K3_dist=K3_DIST,
         )
 
