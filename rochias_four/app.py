@@ -660,7 +660,7 @@ class FourApp(tk.Tk):
             ttk.Label(title_row, text=f"Tapis {i+1}", style="Card.TLabel").pack(side="left")
             status_lbl = ttk.Label(title_row, text="⏳ En attente", style="BadgeIdle.TLabel")
             status_lbl.pack(side="left", padx=(12, 0))
-            bar = SegmentedBar(holder, height=30)
+            bar = SegmentedBar(holder, height=56)
             bar.pack(fill="x", expand=True, pady=(8, 4))
             bar.set_markers([1 / 3, 2 / 3], ["", ""])
             first_cell = (i * 3) + 1
