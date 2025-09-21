@@ -1379,67 +1379,259 @@ class FourApp(tk.Tk):
             t1s = t2s = t3s = float("nan")
             sum_alpha = float("nan")
 
-        if calc and all(math.isfinite(v) for v in (f1, f2, f3)):
-            freq_line = f"   - Frequences tapis : f1 = {f1:.2f} Hz | f2 = {f2:.2f} Hz | f3 = {f3:.2f} Hz"
-        elif calc:
-            freq_line = "   - Frequences tapis : valeurs indisponibles"
-        else:
-            freq_line = "   - Pas encore de calcul (appuie sur Calculer)"
+        text = """GUIDE DÉTAILLÉ — MODÈLE « Four 3 tapis »
+0) Notations & unités (glossaire rapide)
 
-        lines = [
-            "GUIDE SIMPLIFIE - MODELE FOUR 3 TAPIS",
-            "",
-            "1. Entrees saisies",
-            freq_line,
-            "",
-        ]
-        if calc:
-            delta_text = f"{delta_total:+.2f} min" if math.isfinite(delta_total) else "n/a"
-            sum_base_text = _fmt_val(sum_base)
-            sum_alpha_text = _fmt_val(sum_alpha)
-            alpha_text = f"{alpha:.3f}" if math.isfinite(alpha) else "n/a"
-            lines.extend([
-                "2. Resume minute",
-                f"   - Temps exact (12 points) : {fmt_minutes(T_exp)} ({fmt_hms(T_exp * 60)})",
-                f"   - Total LS (modele lineaire) : {fmt_minutes(T_LS)} ({fmt_hms(T_LS * 60)})",
-                f"   - Ecart exact vs LS : {delta_text}",
-                "",
-                "3. Durees par tapis",
-                f"   - Tapis 1 : {fmt_minutes(t1s)} | {_fmt_val(t1s)} (base : {_fmt_val(t1_base)})",
-                f"   - Tapis 2 : {fmt_minutes(t2s)} | {_fmt_val(t2s)} (base : {_fmt_val(t2_base)})",
-                f"   - Tapis 3 : {fmt_minutes(t3s)} | {_fmt_val(t3s)} (base : {_fmt_val(t3_base)})",
-                "",
-                "4. Comment lire les barres",
-                f"   - Alpha = {alpha_text} (facteur d'equilibrage)",
-                "   - Chaque barre represente une distance D_i = alpha x K_i' parcourue a la vitesse f_i",
-                "   - Quand la barre atteint 100 %, le tapis a termine son passage",
-                "",
-                "5. Verifications rapides",
-                f"   - Somme base : {sum_base_text} | Somme alpha : {sum_alpha_text}",
-                f"   - Constantes K' : K1'={K1_DIST:.1f} | K2'={K2_DIST:.1f} | K3'={K3_DIST:.1f}",
-            ])
-        else:
-            lines.extend([
-                "2. Comment ca marche ?",
-                "   - Saisis les frequences (affichage variateur ou IHM/100).",
-                "   - Clique sur Calculer pour generer les indicateurs et activer la simulation.",
-                "   - Les barres se lancent ensuite via le bouton Demarrer.",
-            ])
-        lines.extend([
-            "",
-            "6. Rappels modele",
-            "   - T (min) = d + K1/f1 + K2/f2 + K3/f3 (regression sur 12 essais).",
-            "   - Une interpolation exacte ajuste le total pour coller aux mesures terrain.",
-            "   - Les constantes K' viennent des essais ancrage A/B/C/D.",
-            "",
-            "7. Calcul de l'epaisseur de couche",
-            "   - On part de l'epaisseur entree h0 (champ Epaisseur amont, en cm).",
-            "   - On calcule les capacites u_i = f_i / K_i' pour chaque tapis (vitesse rapportee a la distance d'ancrage).",
-            "   - L'epaisseur apres tapis 2 vaut h2 = h0 x (u1/u2) et apres tapis 3 h3 = h0 x (u1/u3).",
-            "   - Les variations affichees correspondent a Δ12 = ((f1 x K2')/(f2 x K1') - 1) x 100 % et Δ23 = ((f2 x K3')/(f3 x K2') - 1) x 100 %.",
-            "   - Ainsi, si un tapis tourne plus vite qu'en amont, la couche s'affine proportionnellement; s'il tourne plus lentement elle s'epaissit.",
-        ])
-        text = "\n".join(lines)
+𝑓₁, 𝑓₂, 𝑓₃ : fréquences variateur des tapis 1–2–3 en Hz (ou en IHM /100 côté saisie). L’appli accepte 40.00 (Hz) ou 4000 (IHM) ; toute valeur >200 est automatiquement divisée par 100.  utils
+
+𝐾₁′, 𝐾₂′, 𝐾₃′ : distances d’ancrage (unités : min·Hz) issues des essais A/B/C/D ; elles captent le poids relatif de chaque tapis dans le temps total. (Dans ton code : K1_DIST, K2_DIST, K3_DIST).  calibration
+
+𝑑, 𝐾₁, 𝐾₂, 𝐾₃ : paramètres LS (régression moindres‑carrés) utilisés pour calculer le modèle linéaire 𝑇ᴸˢ = 𝑑 + 𝐾₁𝑓₁ + 𝐾₂𝑓₂ + 𝐾₃𝑓₃. (Dans ton code : D_R, K1_R, K2_R, K3_R).  calibration
+
+𝑇ₑₓₐct : temps total exact par interpolation 12 points (colle exactement aux 12 essais). (Dans ton code : predict_T_interp12(..., THETA12)).  calibration
+
+𝛼 : facteur d’équilibrage qui répartit 𝑇ₑₓₐct entre les tapis selon leurs ancrages :
+
+𝛼 = 𝑇ₑₓₐct⁄(𝐾₁′𝑓₁ + 𝐾₂′𝑓₂ + 𝐾₃′𝑓₃)
+
+(Calculé dans app.py puis réutilisé partout.)  app
+
+𝑡ᵢ,ᵦₐₛₑ = 𝐾ᵢ′𝑓ᵢ (min) : temps “base” par tapis (avant équilibrage).
+
+𝑡ᵢ⋆ = 𝛼𝐾ᵢ′𝑓ᵢ (min) : durée affichée par tapis (après équilibrage).  app
+
+𝐷ᵢ = 𝛼𝐾ᵢ′ (en min·Hz) : distance équivalente à parcourir sur la barre du tapis 𝑖. La barre progresse à vitesse 𝑓ᵢ (Hz) et s’arrête quand 𝑓ᵢ × temps = 𝐷ᵢ. (Widget SegmentedBar + boucle _tick).  widgets
+
+
+
+app
+
+ℎ₀ (cm) : épaisseur d’entrée sur T1 (paramètre opérateur).
+
+𝑢ᵢ = 𝑓ᵢ⁄𝐾ᵢ′ (min⁻¹) : capacité de transport calibrée du tapis 𝑖. Sert à déduire l’épaisseur réelle. (Explication §7).
+
+ℎᵢ (cm) : épaisseur de couche après le tapis 𝑖.
+
+1) Entrées saisies (exemple)
+
+𝑓₁ = 49.99 Hz, 𝑓₂ = 99.00 Hz, 𝑓₃ = 99.00 Hz.
+Rappel : tu peux taper 4999, 9900, 9900 (IHM) → la fonction parse_hz convertit en Hz.  utils
+
+2) Temps total — deux niveaux de modèle
+
+Modèle LS (linéaire 4 paramètres)
+
+𝑇ᴸˢ = 𝑑 + 𝐾₁𝑓₁ + 𝐾₂𝑓₂ + 𝐾₃𝑓₃ .
+
+Il vient d’une régression sur les 12 essais. (Fonction compute_times).  calibration
+
+Interpolation exacte 12 points
+On projette (𝑓₁, 𝑓₂, 𝑓₃) dans une base de 12 termes non linéaires (inverses, carrés, croisements…), on résout exactement pour reproduire les 12 essais ; on obtient Θ₁₂ et la prédiction exacte :
+
+𝑇ₑₓₐct = Φ(𝑓₁, 𝑓₂, 𝑓₃) · Θ₁₂ .
+
+(Dans le code : predict_T_interp12(f1,f2,f3, THETA12)).  calibration
+
+Pourquoi deux modèles ?
+
+LS donne une décomposition propre par tapis (utile pour l’affichage segmenté).
+
+L’interpolation donne le total exact observé en atelier.
+On réconcilie les deux via 𝛼 (section suivante).  app
+
+Exemple (chiffres de ton écran)
+
+𝑇ₑₓₐct = 1 h 14 min 55 s = 74.9167 min.
+
+𝑇ᴸˢ = 1 h 47 min 26 s = 107.4333 min.
+
+Écart : 𝑇ₑₓₐct − 𝑇ᴸˢ ≈ −32.51 min.
+
+3) Répartition par tapis (ce que signifient 𝛼, 𝑡ᵢ⋆, 𝐷ᵢ)
+
+On forme la somme base :
+
+Σᵦₐₛₑ = 𝐾₁′𝑓₁ + 𝐾₂′𝑓₂ + 𝐾₃′𝑓₃ (en min),
+
+puis on cale la somme au temps exact :
+
+𝛼 = 𝑇ₑₓₐct⁄Σᵦₐₛₑ  ⇒  𝑡ᵢ⋆ = 𝛼𝐾ᵢ′𝑓ᵢ .
+
+𝑡ᵢ⋆ sont les durées affichées pour chaque tapis.
+
+𝐷ᵢ = 𝛼𝐾ᵢ′ est la distance équivalente cible de la barre 𝑖.
+
+Invariance : 𝑓ᵢ⋅𝑡ᵢ⋆ = 𝐷ᵢ (les barres atteignent 100 % quand cette égalité est vraie).
+Tout ceci est codé dans app.py et dans le widget des barres.  app
+
+
+
+widgets
+
+Exemple (avec 𝐾₁′ = 4725, 𝐾₂′ = 5175, 𝐾₃′ = 15862.5 min·Hz)
+
+Temps base :
+
+𝐾₁′𝑓₁ ≈ 94.52 min, 𝐾₂′𝑓₂ ≈ 52.27 min, 𝐾₃′𝑓₃ ≈ 160.23 min.
+
+Σᵦₐₛₑ ≈ 307.02 min.
+
+𝛼 = 74.9167 / 307.02 ≈ 0.244.
+
+Durées affichées :
+
+𝑡₁⋆ = 𝛼⋅94.52 ≈ 23.07 min (23 min 04 s)
+
+𝑡₂⋆ = 𝛼⋅52.27 ≈ 12.76 min (12 min 45 s)
+
+𝑡₃⋆ = 𝛼⋅160.23 ≈ 39.10 min (39 min 06 s)
+
+∑𝑡ᵢ⋆ = 𝑇ₑₓₐct (vérifié).
+
+Distances de barre :
+
+𝐷₁ = 𝛼𝐾₁′ ≈ 1152.96, 𝐷₂ ≈ 1262.77, 𝐷₃ ≈ 3870.66 (en min·Hz).
+On a exactement 𝑓ᵢ𝑡ᵢ⋆ = 𝐷ᵢ pour chaque tapis.
+
+Ce que sont 𝐾ᵢ′ : ils proviennent des essais d’ancrage (ABCD) et traduisent à quel point, à Hz donné, un tapis « consomme » du temps. Ils sont calculés par calibrate_anchor_from_ABCD.  calibration
+
+4) Comment lire les barres (côté UI)
+
+Chaque barre est un parcours d’une distance 𝐷ᵢ = 𝛼𝐾ᵢ′ à la vitesse 𝑓ᵢ.
+
+Le texte sous la barre affiche : %, vitesse (Hz), temps écoulé / temps cible.
+
+L’animation est gérée dans la boucle _tick ; on met à jour la progression via
+
+distance parcourue = 𝑓ᵢ × (temps écoulé en min).  app
+
+
+
+widgets
+
+5) Vérifications rapides (utile opérateur)
+
+∑𝑡ᵢ,ᵦₐₛₑ = 𝐾₁′𝑓₁ + 𝐾₂′𝑓₂ + 𝐾₃′𝑓₃.
+
+∑𝑡ᵢ⋆ = 𝑇ₑₓₐct.
+
+𝑓ᵢ𝑡ᵢ⋆ = 𝐷ᵢ pour chaque tapis (cohérence prog. barres).
+Ces quantités sont affichées/calculées dans app.py (cartes KPI, « Analyse modèle », etc.).  app
+
+6) Pourquoi deux tapis à la même fréquence n’avancent pas à la même vitesse ?
+
+Parce que chaque tapis a un ancrage 𝐾ᵢ′ propre : à Hz égal, le temps base 𝐾ᵢ′𝑓ᵢ n’est pas le même → vitesses “effectives” différentes.
+Ex. ici, même à 𝑓₂ = 𝑓₃ = 99 Hz, 𝐾₃′𝑓₃ ≫ 𝐾₂′𝑓₂ d’où 𝑡₃⋆ ≫ 𝑡₂⋆. C’est voulu par le modèle et mesuré lors des essais.  calibration
+
+7) Épaisseur de couche (modèle calibré sur les ancrages)
+
+Principe physique : débit 𝑄 ∝ 𝑣 ℎ (largeur et densité constantes).
+Or, avec tes ancrages, la capacité de transport d’un tapis est proportionnelle à
+
+𝑢ᵢ = 𝑓ᵢ⁄𝐾ᵢ′  (unités : min⁻¹)
+
+(dans l’appli, 𝐾ᵢ′ sont les mêmes que pour les barres ; on réutilise donc la calibration existante).  calibration
+
+En régime stationnaire, par conservation du débit :
+
+ℎᵢ = ℎ₀ 𝑢₁⁄𝑢ᵢ = ℎ₀ (𝑓₁ / 𝐾₁′) / (𝑓ᵢ / 𝐾ᵢ′) = ℎ₀ (𝑓₁𝐾ᵢ′) / (𝑓ᵢ𝐾₁′)
+
+et la variation locale d’épaisseur au passage 𝑖−1→𝑖 vaut :
+
+ℎᵢ⁄ℎᵢ₋₁ = 𝑢ᵢ₋₁⁄𝑢ᵢ = (𝑓ᵢ₋₁𝐾ᵢ′) / (𝑓ᵢ𝐾ᵢ₋₁′) ⇒ Δ(𝑖−1→𝑖) = ((𝑓ᵢ₋₁𝐾ᵢ′)/(𝑓ᵢ𝐾ᵢ₋₁′) − 1) × 100 %.
+
+Exemple numérique (avec ℎ₀ = 2.00 cm)
+Capacités : 𝑢₁ = 49.99⁄4725 = 0.01058, 𝑢₂ = 99⁄5175 = 0.01913, 𝑢₃ = 99⁄15862.5 = 0.006241 min⁻¹.
+
+1 → 2 : ℎ₂/ℎ₁ = 𝑢₁/𝑢₂ ≈ 0.553 → Δ₁₂ ≈ −44.7 % → ℎ₂ ≈ 1.106 cm.
+
+2 → 3 : ℎ₃/ℎ₂ = 𝑢₂/𝑢₃ ≈ 3.065 → Δ₂₃ ≈ +206.5 % → ℎ₃ ≈ 3.390 cm.
+
+Interprétation : malgré 𝑓₃ = 99 Hz, T3 évacue moins que T2 car 𝐾₃′ est très grand → sa capacité 𝑢₃ = 𝑓₃/𝐾₃′ est faible → la couche s’épaissit.
+C’est exactement le comportement réel que tu souhaitais capturer (et il repose strictement sur les mêmes ancrages 𝐾ᵢ′ que tes barres).  app
+
+
+
+calibration
+
+8) « Recette de calcul » (prête à coder / relire dans ton code)
+
+Lire les entrées 𝑓ᵢ via parse_hz :
+f1 = parse_hz(e1.get()); f2 = parse_hz(e2.get()); f3 = parse_hz(e3.get()).  utils
+
+Temps total :
+T_LS = d + K1/f1 + K2/f2 + K3/f3 (via compute_times),
+T_exact = predict_T_interp12(f1,f2,f3, THETA12).  calibration
+
+Répartition :
+sum_base = K1_DIST/f1 + K2_DIST/f2 + K3_DIST/f3;
+alpha = T_exact / sum_base;
+t1s = alpha*(K1_DIST/f1) etc. ;
+D1 = alpha*K1_DIST etc. (barres).  app
+
+Épaisseur (si ℎ₀ fourni) :
+u1 = f1/K1_DIST; u2 = f2/K2_DIST; u3 = f3/K3_DIST;
+h1 = h0; h2 = h0*(u1/u2); h3 = h0*(u1/u3) ;
+Δ12% = ((f1*K2_DIST)/(f2*K1_DIST) - 1)*100;
+Δ23% = ((f2*K3_DIST)/(f3*K2_DIST) - 1)*100.
+(Ces formules s’intègrent proprement à app.py et aux badges que tu affiches.)  app
+
+
+
+calibration
+
+9) Ce qu’il faut retenir
+
+Les barres visualisent un parcours 𝐷ᵢ = 𝛼𝐾ᵢ′ à la vitesse 𝑓ᵢ.
+
+Les durées par tapis sont 𝑡ᵢ⋆ = 𝛼𝐾ᵢ′/𝑓ᵢ et sommées donnent 𝑇ₑₓₐct.
+
+L’épaisseur ne suit pas 1/𝑓 mais 1/(𝑓/𝐾′) : elle dépend des capacités 𝑢ᵢ = 𝑓ᵢ/𝐾ᵢ′.
+
+Deux tapis au même Hz peuvent évacuer différemment si leurs 𝐾′ diffèrent (cas typique T2 vs T3).
+Tout ceci est déjà en place dans ton code (fonctions et constantes ci‑dessus).  app
+
+
+
+calibration
+
+Références de code (où tout se trouve)
+
+Entrées package / exécution : __init__.py, __main__.py, Main.py.  __init__
+
+
+
+__main__
+
+
+
+Main
+
+Application & UI (barres, KPI, calculs, 𝛼, _tick) : app.py.  app
+
+Calibration & modèles (LS, interpolation 12 points, ancrages 𝐾ᵢ′) : calibration.py.  calibration
+
+Config (tick, valeurs par défaut) : config.py.  config
+
+Thème/couleurs : theme.py.  theme
+
+Helpers (parse des Hz/IHM, formats) : utils.py.  utils
+
+Widgets (dont SegmentedBar) : widgets.py.  widgets
+
+Annexe — Exemple chiffré complet (cas de ta capture)
+
+Entrées : 𝑓₁ = 49.99, 𝑓₂ = 99, 𝑓₃ = 99 Hz ; 𝐾₁′ = 4725, 𝐾₂′ = 5175, 𝐾₃′ = 15862.5 min·Hz.
+
+Somme base : 94.52 + 52.27 + 160.23 = 307.02 min.
+
+Temps exact : 𝑇ₑₓₐct = 74.9167 min → 𝛼 = 0.2440.
+
+Durées par tapis : 𝑡₁⋆ = 23.07 min, 𝑡₂⋆ = 12.76 min, 𝑡₃⋆ = 39.10 min.
+
+Distances barres : 𝐷₁ = 1152.96, 𝐷₂ = 1262.77, 𝐷₃ = 3870.66 (min·Hz).
+
+Épaisseurs (si ℎ₀ = 2.00 cm) : 𝑢₁ = 0.01058, 𝑢₂ = 0.01913, 𝑢₃ = 0.006241 → ℎ₂ ≈ 1.106 cm (−44.7 % vs T1), ℎ₃ ≈ 3.390 cm (+206.5 % vs T2)."""
 
         # Fenêtre modale
         win = tk.Toplevel(self)
