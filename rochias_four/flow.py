@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 
+from .calibration import K1_DIST, K2_DIST, K3_DIST  # <<— ancrages officiels
+
 
 @dataclass
 class GapEvent:
@@ -14,21 +16,27 @@ class GapEvent:
 
 
 def thickness_and_accum(f1: float, f2: float, f3: float, h0_cm: float) -> Dict[str, float]:
-    """Épaisseurs absolues (cm) sur chaque tapis et cumulations locales en %."""
+    """
+    Épaisseurs et variations d’épaisseur en utilisant la capacité calibrée u_i = f_i / K'_i.
+    h1 = h0
+    h2 = h0 * (f1/K1') / (f2/K2')
+    h3 = h0 * (f1/K1') / (f3/K3')
+    Δ12% = ((f1*K2')/(f2*K1') - 1)*100 ; Δ23% = ((f2*K3')/(f3*K2') - 1)*100
+    """
+    # Capacités équivalentes
+    u1, u2, u3 = (f1 / K1_DIST), (f2 / K2_DIST), (f3 / K3_DIST)
 
     h1 = h0_cm
-    h2 = h0_cm * (f1 / f2)
-    h3 = h0_cm * (f1 / f3)
-    A12 = f1 / f2  # facteur h2/h1
-    A23 = f2 / f3  # facteur h3/h2
+    h2 = h0_cm * (u1 / u2) if u2 > 0 else float("inf")
+    h3 = h0_cm * (u1 / u3) if u3 > 0 else float("inf")
+
+    A12 = (u1 / u2) - 1.0   # ratio h2/h1 - 1
+    A23 = (u2 / u3) - 1.0   # ratio h3/h2 - 1
+
     return {
-        "h1_cm": h1,
-        "h2_cm": h2,
-        "h3_cm": h3,
-        "A12_x": A12,
-        "A23_x": A23,
-        "A12_pct": (A12 - 1.0) * 100.0,
-        "A23_pct": (A23 - 1.0) * 100.0,
+        "h1_cm": h1, "h2_cm": h2, "h3_cm": h3,
+        "A12_x": A12 + 1.0, "A23_x": A23 + 1.0,
+        "A12_pct": A12 * 100.0, "A23_pct": A23 * 100.0,
     }
 
 
