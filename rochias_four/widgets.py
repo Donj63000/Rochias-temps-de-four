@@ -6,7 +6,7 @@ import math
 import tkinter as tk
 from tkinter import ttk
 
-from .theme import ACCENT, BG, BORDER, CARD, FILL, GLOW, RED, SUBTEXT, TRACK
+from .theme import ACCENT, BG, BORDER, CARD, FILL, GLOW, HOLE, HOLE_BORDER, RED, SUBTEXT, TRACK
 
 
 class VScrollFrame(ttk.Frame):
@@ -61,6 +61,7 @@ class SegmentedBar(tk.Canvas):
         self.show_ticks = True
         self._markers = [(1 / 3, "1/3"), (2 / 3, "2/3")]
         self._cell_labels = []
+        self._holes = []
         self.bind("<Configure>", lambda _event: self.redraw())
 
     def set_total_distance(self, distance: float):
@@ -102,6 +103,20 @@ class SegmentedBar(tk.Canvas):
                 continue
             cells.append((pct_float, str(text)))
         self._cell_labels = cells
+        self.redraw()
+
+    def set_holes(self, intervals):
+        """Définit les intervalles vides à afficher sur la barre."""
+
+        cleaned = []
+        for pair in intervals or []:
+            try:
+                x0, x1 = float(pair[0]), float(pair[1])
+            except Exception:
+                continue
+            if x1 > x0:
+                cleaned.append((x0, x1))
+        self._holes = cleaned
         self.redraw()
 
     def redraw(self):
@@ -155,6 +170,20 @@ class SegmentedBar(tk.Canvas):
                 outline=FILL,
             )
             self.create_line(track_left, track_top, fill_right, track_top, fill=GLOW, width=2)
+
+        if inner_width > 0 and self._holes and self.total > 0:
+            for x0, x1 in self._holes:
+                left = track_left + max(0.0, min(1.0, x0 / self.total)) * inner_width
+                right = track_left + max(0.0, min(1.0, x1 / self.total)) * inner_width
+                self.create_rectangle(
+                    int(left),
+                    track_top,
+                    int(right),
+                    track_bot,
+                    fill=HOLE,
+                    outline=HOLE_BORDER,
+                    width=1,
+                )
 
         if inner_width > 0 and self.show_ticks:
             for pct_value, text in self._markers:
