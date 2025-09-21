@@ -28,6 +28,7 @@ from .calibration import (
     predict_T_interp12,
 )
 from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS
+from .flow import GapEvent, thickness_and_accum, holes_for_all_belts
 from .theme import (
     ACCENT,
     ACCENT_DISABLED,
@@ -69,6 +70,9 @@ class FourApp(tk.Tk):
         self._cards = []
         self._responsive_labels = []
         self.compact_mode = False
+        self.feed_events: list[GapEvent] = []
+        self.feed_on = True
+        self.accum_badges: list[ttk.Label | None] = []
 
         self._init_styles()
         self.option_add("*TButton.Cursor", "hand2")
@@ -629,6 +633,7 @@ class FourApp(tk.Tk):
         self.bars = []
         self.bar_texts = []
         self.stage_status = []
+        self.accum_badges = []
 
         for i in range(3):
             holder = ttk.Frame(pcard, style="CardInner.TFrame")
@@ -638,6 +643,10 @@ class FourApp(tk.Tk):
             ttk.Label(title_row, text=f"Tapis {i+1}", style="Card.TLabel").pack(side="left")
             status_lbl = ttk.Label(title_row, text="⏳ En attente", style="BadgeIdle.TLabel")
             status_lbl.pack(side="left", padx=(12, 0))
+            accum_lbl = ttk.Label(title_row, text="", style="BadgeNeutral.TLabel")
+            if i > 0:
+                accum_lbl.pack(side="left", padx=(8, 0))
+            self.accum_badges.append(accum_lbl if i > 0 else None)
             bar = SegmentedBar(holder, height=30)
             bar.pack(fill="x", expand=True, pady=(8, 4))
             bar.set_markers([1 / 3, 2 / 3], ["", ""])
@@ -702,6 +711,26 @@ class FourApp(tk.Tk):
         self.e3.grid(row=2, column=1, sticky="w", pady=6)
 
         ttk.Label(
+            g,
+            text="Épaisseur entrée h0 (cm) =",
+            style="Card.TLabel",
+        ).grid(row=3, column=0, sticky="e", padx=(0, 12), pady=6)
+        self.h0 = ttk.Spinbox(
+            g,
+            from_=0.10,
+            to=20.0,
+            increment=0.10,
+            format="%.2f",
+            width=10,
+            style="Dark.TSpinbox",
+            validate="key",
+            validatecommand=vcmd,
+        )
+        self.h0.grid(row=3, column=1, sticky="w", pady=6)
+        self.h0.delete(0, tk.END)
+        self.h0.insert(0, "2.00")
+
+        ttk.Label(
             card_in,
             text="Astuce : 40.00 ou 4000 (IHM). >200 = IHM/100.",
             style="Hint.TLabel",
@@ -733,6 +762,24 @@ class FourApp(tk.Tk):
         self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2, sticky="w")
         ttk.Button(btns, text="↺ Réinitialiser", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2, sticky="w")
         ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
+
+        self.btn_feed_stop = ttk.Button(
+            btns,
+            text="⛔ Arrêt alimentation",
+            command=self.on_feed_stop,
+            state="disabled",
+            style="Ghost.TButton",
+        )
+        self.btn_feed_stop.grid(row=1, column=0, padx=(0, 12), pady=(8, 2), sticky="w")
+
+        self.btn_feed_resume = ttk.Button(
+            btns,
+            text="✅ Reprise alimentation",
+            command=self.on_feed_resume,
+            state="disabled",
+            style="Ghost.TButton",
+        )
+        self.btn_feed_resume.grid(row=1, column=1, padx=(0, 12), pady=(8, 2), sticky="w")
 
         self.details = Collapsible(body.inner, title="Détails résultats & analyse", open=False)
         self.details.pack(fill="x", padx=18, pady=(8, 0))
@@ -869,10 +916,23 @@ class FourApp(tk.Tk):
         for b, t in zip(self.bars, self.bar_texts):
             b.reset()
             t.config(text="En attente")
+            try:
+                b.set_holes([])
+            except Exception:
+                pass
         for row in self.stage_rows:
             row["freq"].config(text="-- Hz")
             row["time"].config(text="--")
             row["detail"].config(text="--")
+        self.feed_events.clear()
+        self.feed_on = True
+        if hasattr(self, "btn_feed_stop"):
+            self.btn_feed_stop.config(state="disabled")
+        if hasattr(self, "btn_feed_resume"):
+            self.btn_feed_resume.config(state="disabled")
+        for badge in self.accum_badges:
+            if badge is not None:
+                badge.config(text="", style="BadgeNeutral.TLabel")
         self.lbl_total_big.config(text="Temps total (interp. exacte) : --")
         self.lbl_analysis_info.config(text="")
         self.btn_start.config(state="disabled")
@@ -934,6 +994,41 @@ class FourApp(tk.Tk):
         self.seg_distances = [alpha * K1_DIST, alpha * K2_DIST, alpha * K3_DIST]
         self.seg_speeds = [f1, f2, f3]
         self.seg_durations = [t1s * 60.0, t2s * 60.0, t3s * 60.0]
+
+        try:
+            h0_cm = float(self.h0.get().replace(",", "."))
+            if not (h0_cm > 0):
+                raise ValueError
+        except Exception:
+            h0_cm = 2.0
+        th = thickness_and_accum(self.seg_speeds[0], self.seg_speeds[1], self.seg_speeds[2], h0_cm)
+
+        def _badge_style(pct: float) -> str:
+            if pct > 0.5:
+                return "BadgeActive.TLabel"
+            if pct < -0.5:
+                return "BadgeReady.TLabel"
+            return "BadgeNeutral.TLabel"
+
+        if len(self.accum_badges) > 1 and self.accum_badges[1] is not None:
+            txt12 = f"Cumulation 1→2 : {th['A12_pct']:+.0f}% | h₂≈{th['h2_cm']:.2f} cm"
+            self.accum_badges[1].config(text=txt12, style=_badge_style(th["A12_pct"]))
+
+        if len(self.accum_badges) > 2 and self.accum_badges[2] is not None:
+            txt23 = f"Cumulation 2→3 : {th['A23_pct']:+.0f}% | h₃≈{th['h3_cm']:.2f} cm"
+            self.accum_badges[2].config(text=txt23, style=_badge_style(th["A23_pct"]))
+
+        self.feed_events.clear()
+        self.feed_on = True
+        if hasattr(self, "btn_feed_stop"):
+            self.btn_feed_stop.config(state="disabled")
+        if hasattr(self, "btn_feed_resume"):
+            self.btn_feed_resume.config(state="disabled")
+        for bar in self.bars:
+            try:
+                bar.set_holes([])
+            except Exception:
+                pass
 
         for i, (distance_eq, fi, duration) in enumerate(
             zip(self.seg_distances, self.seg_speeds, self.seg_durations)
@@ -1005,6 +1100,15 @@ class FourApp(tk.Tk):
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="normal", text="⏸ Pause")
         self.btn_calculer.config(state="disabled")
+        self.feed_events.clear()
+        self.feed_on = True
+        self.btn_feed_stop.config(state="normal")
+        self.btn_feed_resume.config(state="disabled")
+        for bar in self.bars:
+            try:
+                bar.set_holes([])
+            except Exception:
+                pass
         self._set_stage_status(0, "active")
         self._set_stage_status(1, "ready")
         self._set_stage_status(2, "idle")
@@ -1027,6 +1131,42 @@ class FourApp(tk.Tk):
             self.btn_pause.config(text="⏸ Pause")
             self._set_stage_status(self.seg_idx, "active")
             self._tick()
+
+    def _sim_minutes(self) -> float:
+        base_min = sum(self.seg_durations[: self.seg_idx]) / 60.0
+        if not self.animating:
+            return base_min
+        if self.paused:
+            return base_min + max(0.0, self.pause_t0 - self.seg_start) / 60.0
+        return base_min + (time.perf_counter() - self.seg_start) / 60.0
+
+    def on_feed_stop(self):
+        if not self.animating:
+            self._show_error("Lance la simulation avant d'arrêter l'alimentation.")
+            return
+        if not self.feed_on:
+            return
+        tnow = self._sim_minutes()
+        self.feed_events.append(GapEvent(start_min=tnow))
+        self.feed_on = False
+        self.btn_feed_stop.config(state="disabled")
+        self.btn_feed_resume.config(state="normal")
+        self.toast("Arrêt alimentation enregistré")
+
+    def on_feed_resume(self):
+        if not self.animating:
+            return
+        if self.feed_on:
+            return
+        tnow = self._sim_minutes()
+        for ev in reversed(self.feed_events):
+            if ev.end_min is None:
+                ev.end_min = tnow
+                break
+        self.feed_on = True
+        self.btn_feed_stop.config(state="normal")
+        self.btn_feed_resume.config(state="disabled")
+        self.toast("Reprise alimentation enregistrée")
 
     def _tick(self):
         if not self.animating or self.paused:
@@ -1069,6 +1209,9 @@ class FourApp(tk.Tk):
                 self.btn_pause.config(state="disabled", text="⏸ Pause")
                 self.btn_start.config(state="normal")
                 self.btn_calculer.config(state="normal")
+                self.feed_on = True
+                self.btn_feed_stop.config(state="disabled")
+                self.btn_feed_resume.config(state="disabled")
                 return
             self.seg_start = now
             j = self.seg_idx
@@ -1090,6 +1233,34 @@ class FourApp(tk.Tk):
         self.bar_texts[i].config(
             text=f"{pct:5.1f}% | vitesse {vitesse:.2f} Hz | {fmt_hms(elapsed)} / {fmt_hms(dur)} | en cours"
         )
+
+        try:
+            t_now_min = (sum(self.seg_durations[: self.seg_idx]) + max(0.0, elapsed)) / 60.0
+            t1m = self.seg_durations[0] / 60.0
+            t2m = self.seg_durations[1] / 60.0
+            t3m = self.seg_durations[2] / 60.0
+            D1, D2, D3 = self.seg_distances
+            f1, f2, f3 = self.seg_speeds
+            holes = holes_for_all_belts(
+                self.feed_events,
+                t_now_min,
+                t1m,
+                t2m,
+                t3m,
+                f1,
+                f2,
+                f3,
+                D1,
+                D2,
+                D3,
+            )
+            for belt_idx, intervals in enumerate(holes):
+                try:
+                    self.bars[belt_idx].set_holes(intervals)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         self._schedule_tick()
 

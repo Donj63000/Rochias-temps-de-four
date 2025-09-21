@@ -16,3 +16,5 @@ RED = "#dc2626"
 FILL = ACCENT
 TRACK = "#dcfce7"
 GLOW = "#86efac"
+HOLE = "#fde68a"
+HOLE_BORDER = "#f59e0b"
