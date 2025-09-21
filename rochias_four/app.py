@@ -592,24 +592,6 @@ class FourApp(tk.Tk):
         )
         self.mode_button.pack(side="left", padx=(8, 0))
 
-        subtitle = ttk.Label(
-            hero,
-            text="Modèle : T = d + K1/f1 + K2/f2 + K3/f3  (f = IHM/100). LS pour la répartition par tapis, interpolation exacte (12 essais) pour le temps total.",
-            style="HeroSub.TLabel",
-            wraplength=760,
-            justify="left",
-        )
-        subtitle.grid(row=1, column=1, columnspan=2, sticky="w", pady=(8, 0))
-
-        tagline = ttk.Label(
-            hero,
-            text="Tableau de bord visuel pour suivre la cuisson et les tapis en parallèle.",
-            style="Subtle.TLabel",
-            wraplength=760,
-            justify="left",
-        )
-        tagline.grid(row=2, column=1, columnspan=2, sticky="w", pady=(6, 0))
-
         hero_stats = ttk.Frame(hero, style="CardInner.TFrame")
         hero_stats.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(18, 0))
         hero_stats.columnconfigure((0, 1, 2, 3), weight=1, uniform="hero")
@@ -643,10 +625,6 @@ class FourApp(tk.Tk):
             text="Barres de chargement (temps réel, 3 cellules)",
             style="CardHeading.TLabel",
         ).pack(anchor="w", pady=(0, 12))
-        self.lbl_bars_info = ttk.Label(pcard, text="", style="Hint.TLabel", wraplength=900, justify="left")
-        self.lbl_bars_info.pack(anchor="w", pady=(0, 8))
-        self._responsive_labels.append((self.lbl_bars_info, 0.85))
-        pcard.bind("<Configure>", self._on_resize_wrapping)
 
         self.bars = []
         self.bar_texts = []
@@ -760,10 +738,34 @@ class FourApp(tk.Tk):
         self.details.pack(fill="x", padx=18, pady=(8, 0))
 
         card_out = self._card(self.details.body, fill="both", expand=True)
+        card_out.bind("<Configure>", self._on_resize_wrapping)
         card_out.columnconfigure(0, weight=1)
         ttk.Label(card_out, text="Résultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
         self.lbl_total_big = ttk.Label(card_out, text="Temps total (interp. exacte) : --", style="Result.TLabel")
         self.lbl_total_big.pack(anchor="w", pady=(0, 10))
+        ttk.Label(
+            card_out,
+            text="Modèle : T = d + K1/f1 + K2/f2 + K3/f3  (f = IHM/100). LS pour la répartition par tapis, interpolation exacte (12 essais) pour le temps total.",
+            style="HeroSub.TLabel",
+            wraplength=820,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 2))
+        ttk.Label(
+            card_out,
+            text="Tableau de bord visuel pour suivre la cuisson et les tapis en parallèle.",
+            style="Subtle.TLabel",
+            wraplength=820,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 12))
+        self.lbl_analysis_info = ttk.Label(
+            card_out,
+            text="",
+            style="Hint.TLabel",
+            wraplength=820,
+            justify="left",
+        )
+        self.lbl_analysis_info.pack(anchor="w", pady=(0, 12))
+        self._responsive_labels.append((self.lbl_analysis_info, 0.85))
 
         export_row = ttk.Frame(card_out, style="CardInner.TFrame")
         export_row.pack(fill="x", pady=(0, 10))
@@ -872,7 +874,7 @@ class FourApp(tk.Tk):
             row["time"].config(text="--")
             row["detail"].config(text="--")
         self.lbl_total_big.config(text="Temps total (interp. exacte) : --")
-        self.lbl_bars_info.config(text="")
+        self.lbl_analysis_info.config(text="")
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="disabled", text="⏸ Pause")
         self.btn_calculer.config(state="normal")
@@ -949,7 +951,7 @@ class FourApp(tk.Tk):
             f"Σ t_i (LS) : {fmt_hms((t1 + t2 + t3) * 60)} ({(t1 + t2 + t3):.2f} min) | d = {d:+.3f} min | α = {alpha:.3f}\n"
             f"Σ ancrage : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
         )
-        self.lbl_bars_info.config(text=info)
+        self.lbl_analysis_info.config(text=info)
 
         self._update_kpi("total", fmt_minutes(T_exp), f"{T_exp:.2f} min | {fmt_hms(T_exp * 60)}")
         self._update_kpi("t1", fmt_minutes(t1s), f"{t1s:.2f} min | {fmt_hms(t1s * 60)} | {f1:.2f} Hz")
