@@ -109,16 +109,34 @@ class SegmentedBar(tk.Canvas):
         height = self.winfo_height() or self.height
         self.delete("all")
 
-        radius = height // 2
+        label_space = 18 if self._cell_labels else 0
+        base_height = max(4, height - label_space)
+        radius = base_height // 2
         outer_top = max(0, radius - 14)
-        outer_bot = min(height, radius + 14)
-        self.create_rectangle(0, outer_top, width, outer_bot, fill=BORDER, outline=BORDER)
+        outer_bot = min(base_height, radius + 14)
+        offset = label_space
+        self.create_rectangle(
+            0,
+            outer_top + offset,
+            width,
+            outer_bot + offset,
+            fill=BORDER,
+            outline=BORDER,
+        )
 
         track_left = 4
         track_right = max(track_left, width - 4)
-        track_top = max(outer_top + 2, radius - 10)
-        track_bot = min(outer_bot - 2, radius + 10)
-        self.create_rectangle(track_left, track_top, track_right, track_bot, fill=TRACK, outline=ACCENT, width=1)
+        track_top = max(outer_top + 2, radius - 10) + offset
+        track_bot = min(outer_bot - 2, radius + 10) + offset
+        self.create_rectangle(
+            track_left,
+            track_top,
+            track_right,
+            track_bot,
+            fill=TRACK,
+            outline=ACCENT,
+            width=1,
+        )
 
         pct = 0.0 if self.total <= 1e-9 else min(1.0, self.elapsed / self.total)
         inner_width = max(0, track_right - track_left)
@@ -153,7 +171,7 @@ class SegmentedBar(tk.Canvas):
                     )
 
         if inner_width > 0 and self._cell_labels:
-            label_y = max(0, track_top - 6)
+            label_y = max(4, label_space - 4)
             for pct_value, text in self._cell_labels:
                 x_pos = track_left + max(0.0, min(1.0, pct_value)) * inner_width
                 self.create_text(
