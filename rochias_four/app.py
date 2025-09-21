@@ -1011,11 +1011,11 @@ class FourApp(tk.Tk):
             return "BadgeNeutral.TLabel"
 
         if len(self.accum_badges) > 1 and self.accum_badges[1] is not None:
-            txt12 = f"Cumulation 1→2 : {th['A12_pct']:+.0f}% | h₂≈{th['h2_cm']:.2f} cm"
+            txt12 = f"Variation épaisseur 1→2 : {th['A12_pct']:+.0f}% | h₂≈{th['h2_cm']:.2f} cm"
             self.accum_badges[1].config(text=txt12, style=_badge_style(th["A12_pct"]))
 
         if len(self.accum_badges) > 2 and self.accum_badges[2] is not None:
-            txt23 = f"Cumulation 2→3 : {th['A23_pct']:+.0f}% | h₃≈{th['h3_cm']:.2f} cm"
+            txt23 = f"Variation épaisseur 2→3 : {th['A23_pct']:+.0f}% | h₃≈{th['h3_cm']:.2f} cm"
             self.accum_badges[2].config(text=txt23, style=_badge_style(th["A23_pct"]))
 
         self.feed_events.clear()
