@@ -617,9 +617,9 @@ class FourApp(tk.Tk):
             detail.pack(anchor="w", pady=(2, 0))
             self.kpi_labels[key] = (value, detail)
         Tooltip(self.kpi_labels["total"][0], "Temps total corrigé par interpolation exacte (12 points)")
-        Tooltip(self.kpi_labels["t1"][0], "Durée estimée sur le tapis 1 (pondérée par α)")
-        Tooltip(self.kpi_labels["t2"][0], "Durée estimée sur le tapis 2 (pondérée par α)")
-        Tooltip(self.kpi_labels["t3"][0], "Durée estimée sur le tapis 3 (pondérée par α)")
+        Tooltip(self.kpi_labels["t1"][0], "Durée mécanique (LS) : K_i/f_i")
+        Tooltip(self.kpi_labels["t2"][0], "Durée mécanique (LS) : K_i/f_i")
+        Tooltip(self.kpi_labels["t3"][0], "Durée mécanique (LS) : K_i/f_i")
 
         body = VScrollFrame(self)
         body.pack(fill="both", expand=True)
@@ -978,22 +978,26 @@ class FourApp(tk.Tk):
             self._show_error(f"Saisie invalide : {e}")
             return
 
+        # 1) Modèles
         t1_ls, t2_ls, t3_ls, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
         T_exp = predict_T_interp12(f1, f2, f3, THETA12)
 
-        t1_base = K1_DIST / f1
-        t2_base = K2_DIST / f2
-        t3_base = K3_DIST / f3
-        sum_base = t1_base + t2_base + t3_base
         if T_exp <= 0:
             self._show_error("Temps modélisé ≤ 0 : vérifie les entrées et le calibrage.")
             return
 
-        alpha_diag = T_exp / sum_base if sum_base > 1e-9 else float("nan")
+        # 2) Barres = durées locales (LS), indépendantes par tapis
+        t1s, t2s, t3s = t1_ls, t2_ls, t3_ls
+        self.seg_distances = [f1 * t1s, f2 * t2s, f3 * t3s]   # D_i = f_i * t_i  (min·Hz)
+        self.seg_speeds = [f1, f2, f3]
+        self.seg_durations = [t1s * 60.0, t2s * 60.0, t3s * 60.0]
 
-        t1s = t1_ls
-        t2s = t2_ls
-        t3s = t3_ls
+        # 3) (Diagnostic seulement) ancrages ABCD & alpha
+        t1_base = K1_DIST / f1
+        t2_base = K2_DIST / f2
+        t3_base = K3_DIST / f3
+        sum_base = t1_base + t2_base + t3_base
+        alpha_diag = T_exp / sum_base if sum_base > 1e-9 else float("nan")
 
         for row, freq, ts in zip(self.stage_rows, (f1, f2, f3), (t1s, t2s, t3s)):
             row["freq"].config(text=f"{freq:.2f} Hz")
@@ -1003,9 +1007,6 @@ class FourApp(tk.Tk):
         self.lbl_total_big.config(text=f"Temps total (interp. exacte) : {fmt_minutes(T_exp)} | {fmt_hms(T_exp * 60)}")
 
         self.alpha = alpha_diag
-        self.seg_distances = [f1 * t1s, f2 * t2s, f3 * t3s]
-        self.seg_speeds = [f1, f2, f3]
-        self.seg_durations = [t1s * 60.0, t2s * 60.0, t3s * 60.0]
 
         try:
             h0_cm = float(self.h0.get().replace(",", "."))
@@ -1053,9 +1054,12 @@ class FourApp(tk.Tk):
 
         delta_total = T_exp - T_LS
         info = (
-            "→ Barres = durées locales indépendantes (LS) : t_i = K_i/f_i | cibles D_i = f_i·t_i pour finir à 100% exactement à t_i\n"
+            "→ Barres = durées locales indépendantes (LS) : t_i = K_i/f_i ; cibles D_i = f_i·t_i (100% atteint à t_i)\n"
             f"Exact (interp. 12 pts) : {fmt_hms(T_exp * 60)} ({T_exp:.2f} min) | LS total : {fmt_hms(T_LS * 60)} ({T_LS:.2f} min)\n"
-            f"Σ ancrage (ABCD) : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | α (diag) = {alpha_diag:.3f} | K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
+            f"Σ t_i (LS) : {fmt_hms((t1_ls + t2_ls + t3_ls) * 60)} ({(t1_ls + t2_ls + t3_ls):.2f} min) | "
+            f"d = {d:+.3f} min | α (diag ABCD→Exact) = {alpha_diag:.3f}\n"
+            f"Σ ancrage (ABCD) : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | "
+            f"K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
         )
         self.lbl_analysis_info.config(text=info)
 
@@ -1065,7 +1069,8 @@ class FourApp(tk.Tk):
         self._update_kpi("t3", fmt_minutes(t3s), f"{t3s:.2f} min | {fmt_hms(t3s * 60)} | {f3:.2f} Hz")
 
         self._update_stat_card("ls", f"{T_LS:.2f} min", fmt_hms(T_LS * 60))
-        self._update_stat_card("sum", f"{sum_base:.2f} min", fmt_hms(sum_base * 60))
+        sum_ls = t1_ls + t2_ls + t3_ls
+        self._update_stat_card("sum", f"{sum_ls:.2f} min", fmt_hms(sum_ls * 60))
         self._update_stat_card("alpha", f"{alpha_diag:.3f}", f"{sum_base:.2f} → {T_exp:.2f}")
         self._update_stat_card("delta", f"{delta_total:+.2f} min", fmt_hms(abs(delta_total) * 60))
 
