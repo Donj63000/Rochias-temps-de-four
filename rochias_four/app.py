@@ -46,6 +46,7 @@ from .theme import (
 )
 from .utils import fmt_hms, fmt_minutes, parse_hz
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
+from .graphs import GraphWindow
 
 
 class FourApp(tk.Tk):
@@ -741,7 +742,7 @@ class FourApp(tk.Tk):
 
         btns = ttk.Frame(card_in, style="CardInner.TFrame")
         btns.pack(fill="x", pady=(4, 8))
-        btns.columnconfigure(4, weight=1)
+        btns.columnconfigure(5, weight=1)
         self.btn_calculer = ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton")
         self.btn_calculer.grid(row=0, column=0, padx=(0, 12), pady=2, sticky="w")
         self.btn_start = ttk.Button(
@@ -762,6 +763,7 @@ class FourApp(tk.Tk):
         self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2, sticky="w")
         ttk.Button(btns, text="↺ Réinitialiser", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2, sticky="w")
         ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
+        ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=5, pady=2, sticky="e")
 
         self.btn_feed_stop = ttk.Button(
             btns,
@@ -949,6 +951,18 @@ class FourApp(tk.Tk):
         self._reset_kpis()
         self._reset_stat_cards()
         self._reset_stage_statuses()
+
+    def on_graphs(self):
+        # Sécurise : force un calcul rapide si rien n'est prêt
+        if not self.last_calc:
+            try:
+                self.on_calculer()
+            except Exception:
+                pass
+        try:
+            GraphWindow(self)  # ouvre la fenêtre ; elle se mettra à jour si la simu tourne
+        except Exception as e:
+            self._show_error(f"Impossible d'ouvrir le graphique : {e}")
 
     def on_calculer(self):
         if self.animating or self.paused:
