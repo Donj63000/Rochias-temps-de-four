@@ -10,6 +10,40 @@ from tkinter import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
+# -------- Profils de rampe par cellules (somme = 1.0) --------
+CELL_PROFILE_2 = (0.10, 0.35, 0.55)   # répartition du delta (h2-h1) sur les 3 cellules du Tapis 2
+CELL_PROFILE_3 = (0.20, 0.40, 0.40)   # répartition du delta (h3-h2) sur les 3 cellules du Tapis 3
+
+# Mode d'affichage de la courbe: "ramps" (nouveau, recommandé) ou "steps" (ancien)
+CURVE_MODE = "ramps"
+
+def _piecewise_by_cells(t0: float, L: float, h_in: float, h_out: float, profile):
+    """
+    Construit les 4 points (x,y) aux frontières des 3 cellules d'un tapis:
+      x = [t0, t0+L/3, t0+2L/3, t0+L]
+      y = progression cumulée de h_in -> h_out selon 'profile' (normalisé).
+    Si L <= 0 ou non-fini: plateau sur h_in.
+    """
+    if L <= 0.0 or not math.isfinite(L):
+        return [t0, t0, t0, t0], [h_in, h_in, h_in, h_in]
+
+    # normalisation du profil
+    p = [float(pi) for pi in profile]
+    s = sum(p) if sum(p) > 0 else 1.0
+    p = [pi / s for pi in p]
+
+    # abscisses aux frontières de cellules
+    x0, x1, x2, x3 = t0, t0 + L/3.0, t0 + 2.0*L/3.0, t0 + L
+
+    # ordonnées (cumul du delta)
+    acc = 0.0
+    y0 = h_in
+    acc += p[0]; y1 = h_in + (h_out - h_in) * acc
+    acc += p[1]; y2 = h_in + (h_out - h_in) * acc
+    acc += p[2]; y3 = h_in + (h_out - h_in) * acc  # ≈ h_out
+
+    return [x0, x1, x2, x3], [y0, y1, y2, y3]
+
 from .calibration import K1_DIST, K2_DIST, K3_DIST, compute_times
 from .utils import parse_hz, fmt_hms
 from .config import TICK_SECONDS
@@ -115,49 +149,74 @@ class GraphWindow(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _plot_static(self):
+        # Récupère les données calculées (on ne touche à aucun calcul existant)
         data = _compute_last_or_recalc(self.app)
         h1, h2, h3 = _heights_cm(data.f1, data.f2, data.f3, data.h0_cm)
 
-        # Abscisses des frontières (minutes)
+        # Durées par tapis (minutes) + total
         t1 = data.t1s_min
         t2 = data.t2s_min
         t3 = data.t3s_min
-        T = data.T_total_min
+        T  = data.T_total_min
 
-        # Courbe à paliers (steps-post)
-        xs = [0.0, t1, t1 + t2, T]
-        ys = [h1,  h2,  h3,     h3]
         self.ax.clear()
-        self.ax.step(xs, ys, where="post", linewidth=2.0, label="h(t) calculée")
 
-        # Fond partitionné T1/T2/T3 + traits 1/3–2/3 par tapis (comme les « cellules »)
+        # --- Fond : zones par tapis + traits 1/3 et 2/3 (repères de cellules) ---
         starts = [0.0, t1, t1 + t2]
         lengths = [t1, t2, t3]
-        labels = ["Tapis 1", "Tapis 2", "Tapis 3"]
-        for i, (t0, L, lab) in enumerate(zip(starts, lengths, labels)):
-            if L <= 0: continue
-            # bande de fond légère
+        labels  = ["Tapis 1", "Tapis 2", "Tapis 3"]
+        ymax_rough = max(h1, h2, h3)
+        for t0, L, lab in zip(starts, lengths, labels):
+            if L <= 0:
+                continue
             self.ax.axvspan(t0, t0 + L, alpha=0.10)
-            # marques 1/3 et 2/3 (cellules)
-            self.ax.axvline(t0 + L / 3, linestyle="--", linewidth=1.0, alpha=0.35)
-            self.ax.axvline(t0 + 2 * L / 3, linestyle="--", linewidth=1.0, alpha=0.35)
-            # légende de segment
-            self.ax.text(t0 + 0.01 * L, max(ys) * 1.02, lab, fontsize=9, va="bottom")
+            self.ax.axvline(t0 + L/3.0, linestyle="--", linewidth=1.0, alpha=0.35)
+            self.ax.axvline(t0 + 2.0*L/3.0, linestyle="--", linewidth=1.0, alpha=0.35)
+            self.ax.text(t0 + 0.01*max(L, 1e-6),
+                         ymax_rough * 1.02 if math.isfinite(ymax_rough) else 1.0,
+                         lab, fontsize=9, va="bottom")
 
-        # Axes, grille, légende
-        self.ax.set_xlim(0, max(1e-6, T))
+        # --- Courbe h(t) ---
+        if CURVE_MODE == "steps":
+            # Ancien rendu : paliers instantanés aux changements de tapis
+            xs = [0.0, t1, t1 + t2, T]
+            ys = [h1,  h2,  h3,     h3]
+            self.ax.step(xs, ys, where="post", linewidth=2.0, label="h(t) calculée")
+        else:
+            # Nouveau rendu : rampes par cellules (aucun changement des valeurs calculées)
+            xs, ys = [0.0], [h1]
+
+            # Tapis 1 : plateau (on laisse constant à h1 sur T1)
+            xs += [t1/3.0, 2.0*t1/3.0, t1]
+            ys += [h1,     h1,         h1]
+
+            # Tapis 2 : rampe h1 -> h2, distribuée sur les 3 cellules
+            x2, y2 = _piecewise_by_cells(t1, t2, h1, h2, CELL_PROFILE_2)
+            xs += x2[1:]  # évite le doublon au point t1
+            ys += y2[1:]
+
+            # Tapis 3 : rampe h2 -> h3, distribuée sur les 3 cellules
+            x3, y3 = _piecewise_by_cells(t1 + t2, t3, h2, h3, CELL_PROFILE_3)
+            xs += x3[1:]
+            ys += y3[1:]
+
+            self.ax.plot(xs, ys, linewidth=2.0, label="h(t) calculée")
+
+        # --- Axes, grille, légendes ---
+        self.ax.set_xlim(0.0, max(1e-6, T))
         ymax = max(h1, h2, h3) * 1.15 if math.isfinite(max(h1, h2, h3)) else 1.0
-        self.ax.set_ylim(0, ymax)
+        self.ax.set_ylim(0.0, ymax)
         self.ax.grid(True, which="both", linestyle=":", linewidth=0.8, alpha=0.6)
         self.ax.set_xlabel("Temps (min)")
         self.ax.set_ylabel("Épaisseur h (cm)")
         self.ax.legend(loc="upper right")
 
-        # Infos en haut
-        self.info.config(text=f"f1={data.f1:.2f} Hz, f2={data.f2:.2f} Hz, f3={data.f3:.2f} Hz | "
-                              f"h₁={h1:.2f} cm, h₂={h2:.2f} cm, h₃={h3:.2f} cm | "
-                              f"T={T:.2f} min ({fmt_hms(T*60)})")
-
+        # Bandeau d'info (inchangé)
+        self.info.config(text=(
+            f"f1={data.f1:.2f} Hz, f2={data.f2:.2f} Hz, f3={data.f3:.2f} Hz | "
+            f"h₁={h1:.2f} cm, h₂={h2:.2f} cm, h₃={h3:.2f} cm | "
+            f"T={T:.2f} min ({fmt_hms(T*60)})"
+        ))
         self.canvas.draw()
 
     def _now_sim_minutes(self) -> float:
