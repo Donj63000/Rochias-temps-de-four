@@ -23,10 +23,10 @@ from .calibration import (
     K3_R,
     METRICS_EXACT,
     METRICS_REG,
-    compute_times,
 )
 from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS
-from .flow import GapEvent, thickness_and_accum, holes_for_all_belts
+from .calculations import compute_simulation_plan, thickness_and_accum
+from .flow import GapEvent, holes_for_all_belts
 from .theme import (
     ACCENT,
     ACCENT_DISABLED,
@@ -976,39 +976,34 @@ class FourApp(tk.Tk):
             self._show_error(f"Saisie invalide : {e}")
             return
 
-        # --- total par OLS (inchangé) ---
-        t1_ls, t2_ls, t3_ls, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
-        T_exp = T_LS  # une seule source de vérité pour le total
+        calc = compute_simulation_plan(f1, f2, f3)
+        t1_ls, t2_ls, t3_ls = calc.ls_durations
+        T_LS = calc.total_model_minutes
+        d, K1, K2, K3 = calc.model_params
+        T_total = calc.total_minutes
 
-        if T_exp <= 0:
-            self._show_error("Temps modélisé ≤ 0 : vérifie les entrées et le calibrage.")
+        if T_total <= 0:
+            self._show_error("Temps calculé ≤ 0 : vérifie les entrées et le calibrage.")
             return
 
-        # --- contributions affichées : ancrage (monotone & physique) ---
-        w1 = K1_DIST / f1
-        w2 = K2_DIST / f2
-        w3 = K3_DIST / f3
-        S  = w1 + w2 + w3
-        t1s = T_exp * (w1 / S)
-        t2s = T_exp * (w2 / S)
-        t3s = T_exp * (w3 / S)
-
-        t1_base, t2_base, t3_base = w1, w2, w3
-        sum_base = S
-        alpha_diag = T_exp / sum_base if sum_base > 1e-9 else float("nan")
+        t1s, t2s, t3s = calc.anchor_durations
+        sum_base = T_total
         sum_ls = t1_ls + t2_ls + t3_ls
-        scale_ls = T_exp / sum_ls if sum_ls > 1e-9 else float("nan")
+        alpha_diag = calc.alpha_anchor
+        scale_ls = calc.beta_ls
 
-        self.seg_distances = [f1 * t1s, f2 * t2s, f3 * t3s]   # D_i = f_i * t_i  (min·Hz)
-        self.seg_speeds = [f1, f2, f3]
-        self.seg_durations = [t1s * 60.0, t2s * 60.0, t3s * 60.0]
+        self.seg_distances = [stage.distance_target for stage in calc.stages]
+        self.seg_speeds = [stage.frequency_hz for stage in calc.stages]
+        self.seg_durations = [stage.duration_min * 60.0 for stage in calc.stages]
 
         for row, freq, ts in zip(self.stage_rows, (f1, f2, f3), (t1s, t2s, t3s)):
             row["freq"].config(text=f"{freq:.2f} Hz")
             row["time"].config(text=fmt_minutes(ts))
             row["detail"].config(text=f"{ts:.2f} min | {fmt_hms(ts * 60)}")
 
-        self.lbl_total_big.config(text=f"Temps total (modèle 1/f) : {fmt_minutes(T_exp)} | {fmt_hms(T_exp * 60)}")
+        self.lbl_total_big.config(
+            text=f"Temps total (ancrage) : {fmt_minutes(T_total)} | {fmt_hms(T_total * 60)}"
+        )
 
         self.alpha = alpha_diag
 
@@ -1056,18 +1051,17 @@ class FourApp(tk.Tk):
                 text=f"0.0% | vitesse {fi:.2f} Hz | 00:00:00 / {fmt_hms(duration)} | en attente"
             )
 
-        delta_total = T_exp - T_LS
+        delta_total = T_total - T_LS
         info = (
-            "→ Barres = durées locales (modèle 1/f) : t_i = K_i/f_i ; cibles D_i = f_i·t_i (100% atteint à t_i)\n"
-            f"Total (modèle 1/f) : {fmt_hms(T_exp * 60)} ({T_exp:.2f} min)\n"
-            f"Σ t_i (modèle 1/f, brut) : {fmt_hms(sum_ls * 60)} ({sum_ls:.2f} min) | "
-            f"d = {d:+.3f} min | β (LS→total) = {scale_ls:.3f}\n"
-            f"Σ ancrage (ABCD) : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | α (ABCD→modèle) = {alpha_diag:.3f}\n"
+            "→ Barres = distances ancrage K'_i (constantes) parcourues à la vitesse f_i.\n"
+            f"Total (ancrage) : {fmt_hms(T_total * 60)} ({T_total:.2f} min)\n"
+            f"Total modèle 1/f : {fmt_hms(T_LS * 60)} ({T_LS:.2f} min) | d = {d:+.3f} min | β (LS→total) = {scale_ls:.3f}\n"
+            f"Σ ancrage : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | α (ABCD→modèle) = {alpha_diag:.3f}\n"
             f"K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
         )
         self.lbl_analysis_info.config(text=info)
 
-        self._update_kpi("total", fmt_minutes(T_exp), f"{T_exp:.2f} min | {fmt_hms(T_exp * 60)}")
+        self._update_kpi("total", fmt_minutes(T_total), f"{T_total:.2f} min | {fmt_hms(T_total * 60)}")
         self._update_kpi("t1", fmt_minutes(t1s), f"{t1s:.2f} min | {fmt_hms(t1s * 60)} | {f1:.2f} Hz")
         self._update_kpi("t2", fmt_minutes(t2s), f"{t2s:.2f} min | {fmt_hms(t2s * 60)} | {f2:.2f} Hz")
         self._update_kpi("t3", fmt_minutes(t3s), f"{t3s:.2f} min | {fmt_hms(t3s * 60)} | {f3:.2f} Hz")
@@ -1092,9 +1086,9 @@ class FourApp(tk.Tk):
             f1=f1, f2=f2, f3=f3,
             d=d, K1=K1, K2=K2, K3=K3,
             t1=t1_ls, t2=t2_ls, t3=t3_ls,
-            t1_base=t1_base, t2_base=t2_base, t3_base=t3_base,
+            t1_base=t1s, t2_base=t2s, t3_base=t3s,
             t1_star=t1s, t2_star=t2s, t3_star=t3s,
-            T_LS=T_LS, T_exp=T_exp, alpha=alpha_diag, beta=scale_ls,
+            T_LS=T_LS, T_exp=T_total, alpha=alpha_diag, beta=scale_ls,
             sum_t=t1_ls + t2_ls + t3_ls, sum_base=sum_base, delta=delta_total,
             K1_dist=K1_DIST, K2_dist=K2_DIST, K3_dist=K3_DIST,
         )
@@ -1343,19 +1337,17 @@ class FourApp(tk.Tk):
         try:
             if calc is None:
                 f1 = parse_hz(self.e1.get()); f2 = parse_hz(self.e2.get()); f3 = parse_hz(self.e3.get())
-                t1, t2, t3, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
-                T_exp = T_LS
-                t1_base = K1_DIST / f1
-                t2_base = K2_DIST / f2
-                t3_base = K3_DIST / f3
-                sum_base = t1_base + t2_base + t3_base
-                alpha = T_exp / sum_base if sum_base > 0 else float('nan')
+                plan = compute_simulation_plan(f1, f2, f3)
+                t1, t2, t3 = plan.ls_durations
+                T_LS = plan.total_model_minutes
+                T_exp = plan.total_minutes
+                d, K1, K2, K3 = plan.model_params
+                t1_base, t2_base, t3_base = plan.anchor_durations
+                sum_base = T_exp
+                alpha = plan.alpha_anchor
                 sum_ls = t1 + t2 + t3
-                beta = T_exp / sum_ls if sum_ls > 0 else float('nan')
-                if math.isfinite(beta) and beta > 0:
-                    t1s, t2s, t3s = beta * t1, beta * t2, beta * t3
-                else:
-                    t1s, t2s, t3s = t1, t2, t3
+                beta = plan.beta_ls
+                t1s, t2s, t3s = t1_base, t2_base, t3_base
                 calc = dict(
                     f1=f1, f2=f2, f3=f3,
                     d=d, K1=K1, K2=K2, K3=K3,
@@ -1424,11 +1416,11 @@ class FourApp(tk.Tk):
 
 𝛼 (ABCD→modèle) = 𝑇ₘₒd⁄(𝐾₁′/𝑓₁ + 𝐾₂′/𝑓₂ + 𝐾₃′/𝑓₃).  app
 
-𝑡ᵢ (modèle 1/f) = β·(𝐾ᵢ/𝑓ᵢ) : durées affichées par tapis, cohérentes avec 𝑇ₘₒd.  app
+𝑡ᵢ (ancrage) = 𝐾ᵢ′/𝑓ᵢ : durées affichées par tapis, indépendantes des autres fréquences.  app
 
-𝑡ᵢ,ᵦₐₛₑ = 𝐾ᵢ′/𝑓ᵢ (min) : durées d’ancrage utilisées pour le diagnostic (ne servent plus à répartir le total).
+𝑡ᵢ,ᴸˢ = 𝐾ᵢ/𝑓ᵢ (min) : durées issues du modèle LS (utilisées pour le diagnostic).  calibration
 
-𝐷ᵢ = 𝑓ᵢ·𝑡ᵢ = β·𝐾ᵢ (min·Hz) : distances ciblées par les barres de progression.  widgets
+𝐷ᵢ = 𝐾ᵢ′ (min·Hz) : distances cibles fixes pour les barres de progression.  widgets
 
 𝑢ᵢ = 𝑓ᵢ/𝐾ᵢ′ : capacités relatives pour l’épaisseur (ℎ₁ = ℎ₀, ℎ₂ = ℎ₀·𝑢₁/𝑢₂, ℎ₃ = ℎ₀·𝑢₁/𝑢₃).  calibration/app
 
@@ -1442,10 +1434,8 @@ Temps total :
 t1_ls, t2_ls, t3_ls, T_mod, (d, K1, K2, K3) = compute_times(f1, f2, f3).  calibration
 
 Répartition :
-sum_ls = t1_ls + t2_ls + t3_ls;
-beta = T_mod / sum_ls (si sum_ls > 0 sinon beta = 1) ;
-t1 = beta * t1_ls, etc. (durées affichées) ;
-D1 = f1 * t1, etc. (cibles des barres).  app
+t1 = K1_DIST / f1; t2 = K2_DIST / f2; t3 = K3_DIST / f3 (durées affichées) ;
+D1 = K1_DIST, etc. (cibles fixes des barres).  app
 
 Diagnostics ancrage :
 sum_base = K1_DIST/f1 + K2_DIST/f2 + K3_DIST/f3 ;
@@ -1462,7 +1452,9 @@ h1 = h0; h2 = h0*(u1/u2); h3 = h0*(u1/u3) ;
 
 Les barres visualisent un parcours 𝐷ᵢ = β·𝐾ᵢ à la vitesse 𝑓ᵢ.
 
-Les durées par tapis sont 𝑡ᵢ = β·(𝐾ᵢ/𝑓ᵢ) et leur somme redonne 𝑇ₘₒd.
+Les barres visualisent un parcours fixe 𝐷ᵢ = 𝐾ᵢ′ à la vitesse 𝑓ᵢ.
+
+Les durées par tapis sont 𝑡ᵢ = 𝐾ᵢ′/𝑓ᵢ et leur somme redonne le total ancrage.
 
 L’épaisseur dépend des capacités 𝑢ᵢ = 𝑓ᵢ/𝐾ᵢ′ (monotone en 𝑓ᵢ).
 
@@ -1489,13 +1481,13 @@ Annexe — Exemple chiffré complet (cas de la capture 49.99/99/99)
 
 Entrées : 𝑓₁ = 49.99, 𝑓₂ = 99, 𝑓₃ = 99 Hz ;
 
-Durées LS brutes : 𝐾₁/𝑓₁ = 66.29 min, 𝐾₂/𝑓₂ = 13.69 min, 𝐾₃/𝑓₃ = 124.83 min → Σ = 204.81 min.
+  Durées LS brutes : 𝐾₁/𝑓₁ = 66.29 min, 𝐾₂/𝑓₂ = 13.69 min, 𝐾₃/𝑓₃ = 124.83 min → Σ = 204.81 min.
 
-Temps modèle : 𝑇ₘₒd = 107.43 min ⇒ β = 0.525.
+  Temps modèle : 𝑇ₘₒd = 107.43 min ⇒ β = 0.525.
 
-Durées affichées : 𝑡₁ = 34.77 min, 𝑡₂ = 7.18 min, 𝑡₃ = 65.48 min (Σ = 107.43 min).
+  Durées affichées (ancrage) : 𝑡₁ = 94.52 min, 𝑡₂ = 52.27 min, 𝑡₃ = 160.23 min (Σ = 307.02 min).
 
-Distances barres : 𝐷₁ = 1 738.32, 𝐷₂ = 710.91, 𝐷₃ = 6 482.29 (min·Hz).
+  Distances barres : 𝐷₁ = 4 725.00, 𝐷₂ = 5 175.00, 𝐷₃ = 15 862.50 (min·Hz).
 
 Épaisseurs (ℎ₀ = 2.00 cm) : 𝑢₁ = 0.01058, 𝑢₂ = 0.01913, 𝑢₃ = 0.00624 → ℎ₂ ≈ 1.11 cm (−44.7 % vs T1), ℎ₃ ≈ 3.39 cm (+206.5 % vs T2).
 """
