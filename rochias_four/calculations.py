@@ -16,6 +16,7 @@ from .calibration import (
     is_monotone_decreasing_in_each_f,
     split_contributions,
     total_time_minutes,
+    total_time_minutes_safe,
 )
 
 
@@ -65,7 +66,7 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
         anchor_model_total, f1, f2, f3, split="anchor", anch=DEFAULT_ANCHOR
     )
 
-    total_synergy = total_time_minutes(f1, f2, f3, model="synergy", syn=DEFAULT_SYNERGY)
+    total_synergy = total_time_minutes_safe(f1, f2, f3, syn=DEFAULT_SYNERGY)
     synergy_split_model = split_contributions(
         total_synergy, f1, f2, f3, split="anchor", anch=DEFAULT_ANCHOR
     )

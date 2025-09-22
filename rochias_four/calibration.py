@@ -232,6 +232,32 @@ def total_time_minutes(
         raise ValueError(f"Modèle inconnu: {model}")
 
 
+def total_time_minutes_safe(
+    f1_hz: float, f2_hz: float, f3_hz: float,
+    *, ols: OLSParams = DEFAULT_OLS, anch: AnchorParams = DEFAULT_ANCHOR,
+    syn: SynergyParams = DEFAULT_SYNERGY, enforce_monotony: bool = True
+) -> float:
+    f1, f2, f3 = float(f1_hz), float(f2_hz), float(f3_hz)
+    # total synergie "brut"
+    T_syn = syn.B + syn.K1/f1 + syn.K2/f2 + syn.K3/f3 + syn.S/(f1*f2*f3)
+    if not enforce_monotony:
+        return T_syn
+
+    # Si une dérivée est > 0, on "relâche" S pour rétablir ∂T/∂fi < 0
+    def d_ok():
+        return (syn.K1 + syn.S/(f2*f3) > 0
+                and syn.K2 + syn.S/(f1*f3) > 0
+                and syn.K3 + syn.S/(f1*f2) > 0)
+
+    if d_ok():
+        return T_syn
+
+    # S minimal autorisé pour garder la monotonie : S >= -min(K1 f2 f3, K2 f1 f3, K3 f1 f2)
+    lower_bound = -min(syn.K1*f2*f3, syn.K2*f1*f3, syn.K3*f1*f2) + 1e-6
+    S_eff = max(syn.S, lower_bound)  # on réduit l'effet synergie si besoin
+    return syn.B + syn.K1/f1 + syn.K2/f2 + syn.K3/f3 + S_eff/(f1*f2*f3)
+
+
 def split_contributions(
     total_minutes: float,
     f1_hz: float, f2_hz: float, f3_hz: float,
@@ -326,7 +352,10 @@ def predict(
         raise ValueError("units doit être 'auto', 'hz' ou 'ihm'.")
 
     # 2) Calcul du total
-    total_min = total_time_minutes(f1, f2, f3, model=model)
+    if model == "synergy":
+        total_min = total_time_minutes_safe(f1, f2, f3, syn=DEFAULT_SYNERGY)
+    else:
+        total_min = total_time_minutes(f1, f2, f3, model=model)
 
     # 3) Répartition
     t1_min, t2_min, t3_min = split_contributions(total_min, f1, f2, f3, split=split)
@@ -442,5 +471,6 @@ __all__ = [
     "split_contributions",
     "to_hz",
     "total_time_minutes",
+    "total_time_minutes_safe",
 ]
 

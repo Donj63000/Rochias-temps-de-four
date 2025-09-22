@@ -613,7 +613,7 @@ class FourApp(tk.Tk):
         badge_box = ttk.Frame(hero, style="CardInner.TFrame")
         badge_box.grid(row=0, column=2, sticky="e", padx=(12, 0))
         ttk.Label(badge_box, text="Mode temps réel", style="BadgeReady.TLabel").pack(side="left", padx=(0, 8))
-        ttk.Label(badge_box, text="Interpolation 12 points", style="BadgeNeutral.TLabel").pack(side="left")
+        ttk.Label(badge_box, text="Modèle synergie (calibré)", style="BadgeNeutral.TLabel").pack(side="left")
         self.density_button = ttk.Button(
             badge_box,
             text="Mode compact",
