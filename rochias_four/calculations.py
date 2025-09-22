@@ -61,10 +61,14 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
     sum_anchor_terms = sum(anchor_terms)
 
     anchor_model_total = total_time_minutes(f1, f2, f3, model="anchor", anch=DEFAULT_ANCHOR)
-    anchor_model_split = split_contributions(anchor_model_total, f1, f2, f3, split="anchor", anch=DEFAULT_ANCHOR)
+    anchor_model_split = split_contributions(
+        anchor_model_total, f1, f2, f3, split="anchor", anch=DEFAULT_ANCHOR
+    )
 
     total_synergy = total_time_minutes(f1, f2, f3, model="synergy", syn=DEFAULT_SYNERGY)
-    synergy_split = split_contributions(total_synergy, f1, f2, f3, split="anchor", anch=DEFAULT_ANCHOR)
+    synergy_split_model = split_contributions(
+        total_synergy, f1, f2, f3, split="anchor", anch=DEFAULT_ANCHOR
+    )
 
     ols_split = split_contributions(total_ls, f1, f2, f3, split="model", ols=DEFAULT_OLS)
 
@@ -72,11 +76,13 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
     sum_ls = t1_ls + t2_ls + t3_ls
     beta = total_ls / sum_ls if sum_ls > 0 else float("nan")
 
+    anchor_durations = anchor_terms
+
     stages = tuple(
         StagePlan(freq, duration, distance)
         for freq, duration, distance in zip(
             (f1, f2, f3),
-            synergy_split,
+            anchor_durations,
             (K1_DIST, K2_DIST, K3_DIST),
         )
     )
@@ -86,7 +92,8 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
         "anchor_total_base": sum_anchor_terms,
         "anchor_total_model": anchor_model_total,
         "anchor_split_model": anchor_model_split,
-        "synergy_split": synergy_split,
+        "synergy_split": anchor_durations,
+        "synergy_split_model": synergy_split_model,
         "synergy_total": total_synergy,
         "ols_split": ols_split,
         "anchor_B": DEFAULT_ANCHOR.B,
@@ -101,7 +108,7 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
         ls_durations=(t1_ls, t2_ls, t3_ls),
         total_model_minutes=total_ls,
         model_params=params,
-        anchor_durations=synergy_split,
+        anchor_durations=anchor_durations,
         alpha_anchor=alpha,
         beta_ls=beta,
         extras=extras,
