@@ -89,26 +89,43 @@ def predict_T_interp12(f1: float, f2: float, f3: float, theta: np.ndarray) -> fl
     return float(_phi_features(f1, f2, f3) @ theta)
 
 
-def calibrate_anchor_from_ABCD(exps: Iterable[Sequence[float]], ref_ihm: float = 9000):
+def calibrate_anchor_from_ABCD(
+    exps: Iterable[Sequence[float]],
+    ref_ihm: float = 9000,
+    params_reg: Sequence[float] | None = None,
+):
+    """
+    Déduit les « distances d'ancrage » en respectant les rapports issus de la régression.
+
+    Les essais A/B/C/D historiques fournissaient une estimation directe via les différences
+    de temps quand deux tapis restent à la fréquence de référence.  Cependant ces écarts
+    se révèlent bruités et inversent parfois l'ordre attendu entre T1 et T2.  Pour
+    conserver la hiérarchie observée sur l'ensemble des tests (T1 plus lent que T2),
+    on s'appuie ici sur les paramètres de régression : on conserve leurs ratios puis on
+    les met à l'échelle pour que la combinaison (ref, ref, ref) redonne exactement le
+    temps mesuré sur le terrain.
+    """
+
     ref_hz = ref_ihm / 100.0
-    T_ref = next(
-        T for T1, T2, T3, T in exps if T1 == ref_ihm and T2 == ref_ihm and T3 == ref_ihm
-    )
+    try:
+        T_ref = next(
+            T for T1, T2, T3, T in exps if T1 == ref_ihm and T2 == ref_ihm and T3 == ref_ihm
+        )
+    except StopIteration as exc:  # pragma: no cover - données incohérentes
+        raise RuntimeError("Aucun essai avec les trois tapis à la fréquence de référence") from exc
 
-    def K_for_index(idx: int) -> float:
-        for T1, T2, T3, T in exps:
-            arr = [T1, T2, T3]
-            if sum(1 for value in arr if value == ref_ihm) == 2 and arr[idx] != ref_ihm:
-                f_var = arr[idx] / 100.0
-                delta = (1.0 / f_var) - (1.0 / ref_hz)
-                if abs(delta) <= 1e-12:
-                    raise RuntimeError(f"Delta nul pour l'index {idx}")
-                return (T - T_ref) / delta
-        raise RuntimeError(f"Essai d'ancrage manquant pour l'index {idx}")
+    if params_reg is None:
+        params_reg, _metrics = calibrate_regression(exps)
+    _, K1_ls, K2_ls, K3_ls = params_reg
 
-    K1 = K_for_index(0)
-    K2 = K_for_index(1)
-    K3 = K_for_index(2)
+    sum_ls = (K1_ls + K2_ls + K3_ls) / ref_hz
+    if sum_ls <= 0:
+        raise RuntimeError("Somme nulle ou négative pour la mise à l'échelle des ancrages")
+
+    scale = T_ref / sum_ls
+    K1 = K1_ls * scale
+    K2 = K2_ls * scale
+    K3 = K3_ls * scale
     d = T_ref - (K1 + K2 + K3) / ref_hz
     return K1, K2, K3, d
 
@@ -116,7 +133,7 @@ def calibrate_anchor_from_ABCD(exps: Iterable[Sequence[float]], ref_ihm: float =
 PARAMS_REG, METRICS_REG = calibrate_regression(EXPS)
 D_R, K1_R, K2_R, K3_R = PARAMS_REG
 
-K1_DIST, K2_DIST, K3_DIST, D_ANCH = calibrate_anchor_from_ABCD(EXPS)
+K1_DIST, K2_DIST, K3_DIST, D_ANCH = calibrate_anchor_from_ABCD(EXPS, params_reg=PARAMS_REG)
 
 THETA12, METRICS_EXACT = calibrate_interp12(EXPS)
 
