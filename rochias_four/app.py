@@ -977,17 +977,25 @@ class FourApp(tk.Tk):
             return
 
         calc = compute_simulation_plan(f1, f2, f3)
+        extras = getattr(calc, "extras", {})
         t1_ls, t2_ls, t3_ls = calc.ls_durations
         T_LS = calc.total_model_minutes
         d, K1, K2, K3 = calc.model_params
         T_total = calc.total_minutes
+        T_exp = T_total
+        anchor_terms = extras.get("anchor_terms_base", (K1_DIST / f1, K2_DIST / f2, K3_DIST / f3))
+        anchor_model_total = extras.get("anchor_total_model", float("nan"))
+        anchor_model_split = extras.get("anchor_split_model", calc.anchor_durations)
+        synergy_split = extras.get("synergy_split", calc.anchor_durations)
+        ols_split = extras.get("ols_split", None)
+        sum_anchor_base = extras.get("anchor_total_base", sum(anchor_terms))
 
         if T_total <= 0:
             self._show_error("Temps calculé ≤ 0 : vérifie les entrées et le calibrage.")
             return
 
-        t1s, t2s, t3s = calc.anchor_durations
-        sum_base = T_total
+        t1s, t2s, t3s = synergy_split
+        sum_base = sum_anchor_base
         sum_ls = t1_ls + t2_ls + t3_ls
         alpha_diag = calc.alpha_anchor
         scale_ls = calc.beta_ls
@@ -1002,7 +1010,7 @@ class FourApp(tk.Tk):
             row["detail"].config(text=f"{ts:.2f} min | {fmt_hms(ts * 60)}")
 
         self.lbl_total_big.config(
-            text=f"Temps total (ancrage) : {fmt_minutes(T_total)} | {fmt_hms(T_total * 60)}"
+            text=f"Temps total (modèle synergie) : {fmt_minutes(T_total)} | {fmt_hms(T_total * 60)}"
         )
 
         self.alpha = alpha_diag
@@ -1052,11 +1060,17 @@ class FourApp(tk.Tk):
             )
 
         delta_total = T_total - T_LS
+        anchor_total_txt = (
+            f"{fmt_hms(anchor_model_total * 60)} ({anchor_model_total:.2f} min)"
+            if math.isfinite(anchor_model_total)
+            else "n/a"
+        )
         info = (
             "→ Barres = distances ancrage K'_i (constantes) parcourues à la vitesse f_i.\n"
-            f"Total (ancrage) : {fmt_hms(T_total * 60)} ({T_total:.2f} min)\n"
+            f"Total (synergie) : {fmt_hms(T_total * 60)} ({T_total:.2f} min)\n"
+            f"Total (ancrage) : {anchor_total_txt} | B_A = {extras.get('anchor_B', float('nan')):+.3f} min\n"
             f"Total modèle 1/f : {fmt_hms(T_LS * 60)} ({T_LS:.2f} min) | d = {d:+.3f} min | β (LS→total) = {scale_ls:.3f}\n"
-            f"Σ ancrage : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | α (ABCD→modèle) = {alpha_diag:.3f}\n"
+            f"Σ ancrage brut : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | α (synergie/ancrage) = {alpha_diag:.3f}\n"
             f"K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
         )
         self.lbl_analysis_info.config(text=info)
@@ -1086,11 +1100,14 @@ class FourApp(tk.Tk):
             f1=f1, f2=f2, f3=f3,
             d=d, K1=K1, K2=K2, K3=K3,
             t1=t1_ls, t2=t2_ls, t3=t3_ls,
-            t1_base=t1s, t2_base=t2s, t3_base=t3s,
+            t1_base=anchor_terms[0], t2_base=anchor_terms[1], t3_base=anchor_terms[2],
             t1_star=t1s, t2_star=t2s, t3_star=t3s,
             T_LS=T_LS, T_exp=T_total, alpha=alpha_diag, beta=scale_ls,
             sum_t=t1_ls + t2_ls + t3_ls, sum_base=sum_base, delta=delta_total,
             K1_dist=K1_DIST, K2_dist=K2_DIST, K3_dist=K3_DIST,
+            anchor_model_total=anchor_model_total,
+            anchor_model_split=anchor_model_split,
+            ols_split=ols_split,
         )
 
         self.total_duration = sum(self.seg_durations)
@@ -1338,27 +1355,31 @@ class FourApp(tk.Tk):
             if calc is None:
                 f1 = parse_hz(self.e1.get()); f2 = parse_hz(self.e2.get()); f3 = parse_hz(self.e3.get())
                 plan = compute_simulation_plan(f1, f2, f3)
+                extras = getattr(plan, "extras", {})
                 t1, t2, t3 = plan.ls_durations
                 T_LS = plan.total_model_minutes
                 T_exp = plan.total_minutes
                 d, K1, K2, K3 = plan.model_params
-                t1_base, t2_base, t3_base = plan.anchor_durations
-                sum_base = T_exp
+                anchor_terms = extras.get("anchor_terms_base", plan.anchor_durations)
+                sum_base = extras.get("anchor_total_base", sum(anchor_terms))
                 alpha = plan.alpha_anchor
                 sum_ls = t1 + t2 + t3
                 beta = plan.beta_ls
-                t1s, t2s, t3s = t1_base, t2_base, t3_base
+                t1s, t2s, t3s = plan.anchor_durations
                 calc = dict(
                     f1=f1, f2=f2, f3=f3,
                     d=d, K1=K1, K2=K2, K3=K3,
                     t1=t1, t2=t2, t3=t3,
-                    t1_base=t1_base, t2_base=t2_base, t3_base=t3_base,
+                    t1_base=anchor_terms[0], t2_base=anchor_terms[1], t3_base=anchor_terms[2],
                     t1_star=t1s, t2_star=t2s, t3_star=t3s,
                     T_LS=T_LS, T_exp=T_exp, alpha=alpha, beta=beta,
                     sum_t=t1 + t2 + t3,
                     sum_base=sum_base,
                     delta=T_exp - T_LS,
                     K1_dist=K1_DIST, K2_dist=K2_DIST, K3_dist=K3_DIST,
+                    anchor_model_total=extras.get("anchor_total_model"),
+                    anchor_model_split=extras.get("anchor_split_model"),
+                    ols_split=extras.get("ols_split"),
                 )
         except Exception:
             pass
