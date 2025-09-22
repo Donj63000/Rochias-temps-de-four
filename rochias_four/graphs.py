@@ -10,7 +10,7 @@ from tkinter import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
-from .calibration import K1_DIST, K2_DIST, K3_DIST, THETA12, compute_times, predict_T_interp12
+from .calibration import K1_DIST, K2_DIST, K3_DIST, compute_times
 from .utils import parse_hz, fmt_hms
 from .config import TICK_SECONDS
 
@@ -24,31 +24,30 @@ class GraphInputs:
     t1s_min: float
     t2s_min: float
     t3s_min: float
-    T_exact_min: float
+    T_total_min: float
 
 
 def _compute_last_or_recalc(app) -> GraphInputs:
     """
     Récupère les données du dernier calcul (si dispo) sinon recalcule depuis les entrées.
-    Retourne fréquences, h0, durées par tapis (t*_i) et T_exact.
+    Retourne fréquences, h0, durées par tapis (t*_i) et T_modèle.
     """
     # 1) lire f1,f2,f3 depuis last_calc si possible, sinon depuis les champs UI
     if getattr(app, "last_calc", None):
         f1 = float(app.last_calc["f1"]); f2 = float(app.last_calc["f2"]); f3 = float(app.last_calc["f3"])
-        T_exact = float(app.last_calc["T_exp"])
+        T_total = float(app.last_calc["T_exp"])
         t1s = float(app.last_calc["t1_star"]); t2s = float(app.last_calc["t2_star"]); t3s = float(app.last_calc["t3_star"])
     else:
         f1 = parse_hz(app.e1.get()); f2 = parse_hz(app.e2.get()); f3 = parse_hz(app.e3.get())
         # Recalcul minimal (même logique que app.on_calculer)
-        t1, t2, t3, _T_ls, (_d, _K1, _K2, _K3) = compute_times(f1, f2, f3)
-        T_exact = predict_T_interp12(f1, f2, f3, THETA12)
-        # Décomposition via alpha (comme dans app.py)
-        t1_base, t2_base, t3_base = K1_DIST / f1, K2_DIST / f2, K3_DIST / f3
-        sum_base = t1_base + t2_base + t3_base
-        if sum_base <= 1e-12:
-            raise ValueError("Somme des temps d'ancrage nulle.")
-        alpha = T_exact / sum_base
-        t1s, t2s, t3s = alpha * t1_base, alpha * t2_base, alpha * t3_base
+        t1, t2, t3, T_total, (_d, _K1, _K2, _K3) = compute_times(f1, f2, f3)
+        sum_ls = t1 + t2 + t3
+        if sum_ls <= 1e-12:
+            raise ValueError("Somme des durées LS nulle.")
+        scale_ls = T_total / sum_ls
+        if not (math.isfinite(scale_ls) and scale_ls > 0):
+            scale_ls = 1.0
+        t1s, t2s, t3s = scale_ls * t1, scale_ls * t2, scale_ls * t3
 
     # 2) lire h0 si l'appli a un champ self.h0 ; sinon défaut 2.00 cm
     h0_cm = 2.0
@@ -63,7 +62,7 @@ def _compute_last_or_recalc(app) -> GraphInputs:
     return GraphInputs(
         f1=f1, f2=f2, f3=f3, h0_cm=h0_cm,
         t1s_min=t1s, t2s_min=t2s, t3s_min=t3s,
-        T_exact_min=(t1s + t2s + t3s) if math.isfinite(t1s+t2s+t3s) else T_exact
+        T_total_min=T_total
     )
 
 
@@ -123,7 +122,7 @@ class GraphWindow(tk.Toplevel):
         t1 = data.t1s_min
         t2 = data.t2s_min
         t3 = data.t3s_min
-        T = data.T_exact_min
+        T = data.T_total_min
 
         # Courbe à paliers (steps-post)
         xs = [0.0, t1, t1 + t2, T]
