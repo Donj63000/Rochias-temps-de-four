@@ -976,29 +976,28 @@ class FourApp(tk.Tk):
             self._show_error(f"Saisie invalide : {e}")
             return
 
-        # 1) Modèles
+        # --- total par OLS (inchangé) ---
         t1_ls, t2_ls, t3_ls, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
-        T_exp = T_LS
+        T_exp = T_LS  # une seule source de vérité pour le total
 
         if T_exp <= 0:
             self._show_error("Temps modélisé ≤ 0 : vérifie les entrées et le calibrage.")
             return
 
-        # 2) (Diagnostic + répartition) ancrages ABCD & alpha
-        t1_base = K1_DIST / f1
-        t2_base = K2_DIST / f2
-        t3_base = K3_DIST / f3
-        sum_base = t1_base + t2_base + t3_base
+        # --- contributions affichées : ancrage (monotone & physique) ---
+        w1 = K1_DIST / f1
+        w2 = K2_DIST / f2
+        w3 = K3_DIST / f3
+        S  = w1 + w2 + w3
+        t1s = T_exp * (w1 / S)
+        t2s = T_exp * (w2 / S)
+        t3s = T_exp * (w3 / S)
+
+        t1_base, t2_base, t3_base = w1, w2, w3
+        sum_base = S
         alpha_diag = T_exp / sum_base if sum_base > 1e-9 else float("nan")
         sum_ls = t1_ls + t2_ls + t3_ls
         scale_ls = T_exp / sum_ls if sum_ls > 1e-9 else float("nan")
-
-        if math.isfinite(scale_ls) and scale_ls > 0:
-            t1s = scale_ls * t1_ls
-            t2s = scale_ls * t2_ls
-            t3s = scale_ls * t3_ls
-        else:
-            t1s, t2s, t3s = t1_ls, t2_ls, t3_ls
 
         self.seg_distances = [f1 * t1s, f2 * t2s, f3 * t3s]   # D_i = f_i * t_i  (min·Hz)
         self.seg_speeds = [f1, f2, f3]
