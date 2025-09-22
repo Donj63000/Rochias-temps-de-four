@@ -23,9 +23,7 @@ from .calibration import (
     K3_R,
     METRICS_EXACT,
     METRICS_REG,
-    THETA12,
     compute_times,
-    predict_T_interp12,
 )
 from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS
 from .flow import GapEvent, thickness_and_accum, holes_for_all_belts
@@ -91,7 +89,7 @@ class FourApp(tk.Tk):
         self.seg_distances = [0.0, 0.0, 0.0]   # longueurs équivalentes (K1,K2,K3)
         self.seg_speeds = [0.0, 0.0, 0.0]      # vitesses (Hz) des 3 tapis
         self._after_id = None       # gestion propre du timer Tk
-        self.alpha = 1.0            # facteur d’échelle diag (Σ ancrage → T_exact)
+        self.alpha = 1.0            # facteur d’échelle diag (Σ ancrage → T_modèle)
         self.last_calc = None       # stockage du dernier calcul pour Explications
         self.total_duration = 0.0
         self.notified_stage1 = False
@@ -790,11 +788,11 @@ class FourApp(tk.Tk):
         card_out.bind("<Configure>", self._on_resize_wrapping)
         card_out.columnconfigure(0, weight=1)
         ttk.Label(card_out, text="Résultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
-        self.lbl_total_big = ttk.Label(card_out, text="Temps total (interp. exacte) : --", style="Result.TLabel")
+        self.lbl_total_big = ttk.Label(card_out, text="Temps total (modèle 1/f) : --", style="Result.TLabel")
         self.lbl_total_big.pack(anchor="w", pady=(0, 10))
         ttk.Label(
             card_out,
-            text="Modèle : T = d + K1/f1 + K2/f2 + K3/f3  (f = IHM/100). LS pour la répartition par tapis, interpolation exacte (12 essais) pour le temps total.",
+            text="Modèle : T = d + K1/f1 + K2/f2 + K3/f3  (f = IHM/100). Régression LS (4 paramètres) pour le total et la répartition par tapis.",
             style="HeroSub.TLabel",
             wraplength=820,
             justify="left",
@@ -844,8 +842,8 @@ class FourApp(tk.Tk):
         stat_defs = [
             ("ls", "Total LS (4 paramètres)", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
             ("sum", "Somme t_i (LS)", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
-            ("alpha", "Facteur alpha", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
-            ("delta", "Delta exact - LS", "StatCardAccent.TFrame", "StatTitleAccent.TLabel", "StatValueAccent.TLabel", "StatDetailAccent.TLabel"),
+            ("alpha", "Facteurs α / β", "StatCard.TFrame", "StatTitle.TLabel", "StatValue.TLabel", "StatDetail.TLabel"),
+            ("delta", "Delta total - LS", "StatCardAccent.TFrame", "StatTitleAccent.TLabel", "StatValueAccent.TLabel", "StatDetailAccent.TLabel"),
         ]
         for col, (key, title, frame_style, title_style, value_style, detail_style) in enumerate(stat_defs):
             self.stat_cards[key] = self._create_stat_card(
@@ -935,7 +933,7 @@ class FourApp(tk.Tk):
         for badge in self.accum_badges:
             if badge is not None:
                 badge.config(text="", style="BadgeNeutral.TLabel")
-        self.lbl_total_big.config(text="Temps total (interp. exacte) : --")
+        self.lbl_total_big.config(text="Temps total (modèle 1/f) : --")
         self.lbl_analysis_info.config(text="")
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="disabled", text="⏸ Pause")
@@ -980,7 +978,7 @@ class FourApp(tk.Tk):
 
         # 1) Modèles
         t1_ls, t2_ls, t3_ls, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
-        T_exp = predict_T_interp12(f1, f2, f3, THETA12)
+        T_exp = T_LS
 
         if T_exp <= 0:
             self._show_error("Temps modélisé ≤ 0 : vérifie les entrées et le calibrage.")
@@ -992,13 +990,14 @@ class FourApp(tk.Tk):
         t3_base = K3_DIST / f3
         sum_base = t1_base + t2_base + t3_base
         alpha_diag = T_exp / sum_base if sum_base > 1e-9 else float("nan")
+        sum_ls = t1_ls + t2_ls + t3_ls
+        scale_ls = T_exp / sum_ls if sum_ls > 1e-9 else float("nan")
 
-        if math.isfinite(alpha_diag) and alpha_diag > 0:
-            t1s = alpha_diag * t1_base
-            t2s = alpha_diag * t2_base
-            t3s = alpha_diag * t3_base
+        if math.isfinite(scale_ls) and scale_ls > 0:
+            t1s = scale_ls * t1_ls
+            t2s = scale_ls * t2_ls
+            t3s = scale_ls * t3_ls
         else:
-            # Fallback tolérant : on conserve la décomposition LS
             t1s, t2s, t3s = t1_ls, t2_ls, t3_ls
 
         self.seg_distances = [f1 * t1s, f2 * t2s, f3 * t3s]   # D_i = f_i * t_i  (min·Hz)
@@ -1010,7 +1009,7 @@ class FourApp(tk.Tk):
             row["time"].config(text=fmt_minutes(ts))
             row["detail"].config(text=f"{ts:.2f} min | {fmt_hms(ts * 60)}")
 
-        self.lbl_total_big.config(text=f"Temps total (interp. exacte) : {fmt_minutes(T_exp)} | {fmt_hms(T_exp * 60)}")
+        self.lbl_total_big.config(text=f"Temps total (modèle 1/f) : {fmt_minutes(T_exp)} | {fmt_hms(T_exp * 60)}")
 
         self.alpha = alpha_diag
 
@@ -1060,11 +1059,11 @@ class FourApp(tk.Tk):
 
         delta_total = T_exp - T_LS
         info = (
-            "→ Barres = durées locales indépendantes (LS) : t_i = K_i/f_i ; cibles D_i = f_i·t_i (100% atteint à t_i)\n"
-            f"Exact (interp. 12 pts) : {fmt_hms(T_exp * 60)} ({T_exp:.2f} min) | LS total : {fmt_hms(T_LS * 60)} ({T_LS:.2f} min)\n"
-            f"Σ t_i (LS) : {fmt_hms((t1_ls + t2_ls + t3_ls) * 60)} ({(t1_ls + t2_ls + t3_ls):.2f} min) | "
-            f"d = {d:+.3f} min | α (diag ABCD→Exact) = {alpha_diag:.3f}\n"
-            f"Σ ancrage (ABCD) : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | "
+            "→ Barres = durées locales (modèle 1/f) : t_i = K_i/f_i ; cibles D_i = f_i·t_i (100% atteint à t_i)\n"
+            f"Total (modèle 1/f) : {fmt_hms(T_exp * 60)} ({T_exp:.2f} min)\n"
+            f"Σ t_i (modèle 1/f, brut) : {fmt_hms(sum_ls * 60)} ({sum_ls:.2f} min) | "
+            f"d = {d:+.3f} min | β (LS→total) = {scale_ls:.3f}\n"
+            f"Σ ancrage (ABCD) : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | α (ABCD→modèle) = {alpha_diag:.3f}\n"
             f"K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
         )
         self.lbl_analysis_info.config(text=info)
@@ -1077,7 +1076,13 @@ class FourApp(tk.Tk):
         self._update_stat_card("ls", f"{T_LS:.2f} min", fmt_hms(T_LS * 60))
         sum_ls = t1_ls + t2_ls + t3_ls
         self._update_stat_card("sum", f"{sum_ls:.2f} min", fmt_hms(sum_ls * 60))
-        self._update_stat_card("alpha", f"{alpha_diag:.3f}", f"{sum_base:.2f} → {T_exp:.2f}")
+        alpha_val = f"{alpha_diag:.3f}" if math.isfinite(alpha_diag) else "n/a"
+        beta_val = f"{scale_ls:.3f}" if math.isfinite(scale_ls) else "n/a"
+        self._update_stat_card(
+            "alpha",
+            f"α={alpha_val} | β={beta_val}",
+            f"Σbase {sum_base:.2f} → {T_exp:.2f} | ΣLS {sum_ls:.2f}",
+        )
         self._update_stat_card("delta", f"{delta_total:+.2f} min", fmt_hms(abs(delta_total) * 60))
 
         self._set_stage_status(0, "ready")
@@ -1090,7 +1095,7 @@ class FourApp(tk.Tk):
             t1=t1_ls, t2=t2_ls, t3=t3_ls,
             t1_base=t1_base, t2_base=t2_base, t3_base=t3_base,
             t1_star=t1s, t2_star=t2s, t3_star=t3s,
-            T_LS=T_LS, T_exp=T_exp, alpha=alpha_diag,
+            T_LS=T_LS, T_exp=T_exp, alpha=alpha_diag, beta=scale_ls,
             sum_t=t1_ls + t2_ls + t3_ls, sum_base=sum_base, delta=delta_total,
             K1_dist=K1_DIST, K2_dist=K2_DIST, K3_dist=K3_DIST,
         )
@@ -1340,23 +1345,25 @@ class FourApp(tk.Tk):
             if calc is None:
                 f1 = parse_hz(self.e1.get()); f2 = parse_hz(self.e2.get()); f3 = parse_hz(self.e3.get())
                 t1, t2, t3, T_LS, (d, K1, K2, K3) = compute_times(f1, f2, f3)
-                T_exp = predict_T_interp12(f1, f2, f3, THETA12)
+                T_exp = T_LS
                 t1_base = K1_DIST / f1
                 t2_base = K2_DIST / f2
                 t3_base = K3_DIST / f3
                 sum_base = t1_base + t2_base + t3_base
                 alpha = T_exp / sum_base if sum_base > 0 else float('nan')
-                if math.isfinite(alpha):
-                    t1s, t2s, t3s = alpha * t1_base, alpha * t2_base, alpha * t3_base
+                sum_ls = t1 + t2 + t3
+                beta = T_exp / sum_ls if sum_ls > 0 else float('nan')
+                if math.isfinite(beta) and beta > 0:
+                    t1s, t2s, t3s = beta * t1, beta * t2, beta * t3
                 else:
-                    t1s = t2s = t3s = float('nan')
+                    t1s, t2s, t3s = t1, t2, t3
                 calc = dict(
                     f1=f1, f2=f2, f3=f3,
                     d=d, K1=K1, K2=K2, K3=K3,
                     t1=t1, t2=t2, t3=t3,
                     t1_base=t1_base, t2_base=t2_base, t3_base=t3_base,
                     t1_star=t1s, t2_star=t2s, t3_star=t3s,
-                    T_LS=T_LS, T_exp=T_exp, alpha=alpha,
+                    T_LS=T_LS, T_exp=T_exp, alpha=alpha, beta=beta,
                     sum_t=t1 + t2 + t3,
                     sum_base=sum_base,
                     delta=T_exp - T_LS,
@@ -1382,6 +1389,7 @@ class FourApp(tk.Tk):
             T_LS = _as_float(calc.get("T_LS"))
             T_exp = _as_float(calc.get("T_exp"))
             alpha = _as_float(calc.get("alpha"))
+            beta = _as_float(calc.get("beta"))
             t1_base = _as_float(calc.get("t1_base"))
             t2_base = _as_float(calc.get("t2_base"))
             t3_base = _as_float(calc.get("t3_base"))
@@ -1396,7 +1404,7 @@ class FourApp(tk.Tk):
             sum_alpha = sum(alpha_values) if all(math.isfinite(v) for v in alpha_values) else float("nan")
         else:
             f1 = f2 = f3 = float("nan")
-            T_LS = T_exp = alpha = sum_base = delta_total = float("nan")
+            T_LS = T_exp = alpha = beta = sum_base = delta_total = float("nan")
             t1_base = t2_base = t3_base = float("nan")
             t1s = t2s = t3s = float("nan")
             sum_alpha = float("nan")
@@ -1404,177 +1412,27 @@ class FourApp(tk.Tk):
         text = """GUIDE DÉTAILLÉ — MODÈLE « Four 3 tapis »
 0) Notations & unités (glossaire rapide)
 
-𝑓₁, 𝑓₂, 𝑓₃ : fréquences variateur des tapis 1–2–3 en Hz (ou en IHM /100 côté saisie). L’appli accepte 40.00 (Hz) ou 4000 (IHM) ; toute valeur >200 est automatiquement divisée par 100.  utils
+𝑓₁, 𝑓₂, 𝑓₃ : fréquences variateur des tapis 1–2–3 en Hz (ou en IHM /100 côté saisie). L’appli accepte 40.00 (Hz) ou 4000 (IHM) ;
+ toute valeur >200 est automatiquement divisée par 100.  utils
 
-𝐾₁′, 𝐾₂′, 𝐾₃′ : distances d’ancrage (unités : min·Hz) issues des essais A/B/C/D ; elles captent le poids relatif de chaque tapis dans le temps total. (Dans ton code : K1_DIST, K2_DIST, K3_DIST).  calibration
+𝐾₁′, 𝐾₂′, 𝐾₃′ : distances d’ancrage (min·Hz) issues des essais A/B/C/D ; elles servent d’indicateurs pour les rapports d’épaisseur.
+ (Dans le code : K1_DIST, K2_DIST, K3_DIST).  calibration
 
-𝑑, 𝐾₁, 𝐾₂, 𝐾₃ : paramètres LS (régression moindres‑carrés) utilisés pour calculer le modèle linéaire 𝑇ᴸˢ = 𝑑 + 𝐾₁𝑓₁ + 𝐾₂𝑓₂ + 𝐾₃𝑓₃. (Dans ton code : D_R, K1_R, K2_R, K3_R).  calibration
+𝑑, 𝐾₁, 𝐾₂, 𝐾₃ : paramètres du modèle 1/f (régression LS) donnant le temps total :
+𝑇ₘₒd = 𝑑 + 𝐾₁/𝑓₁ + 𝐾₂/𝑓₂ + 𝐾₃/𝑓₃.  calibration
 
-𝑇ₑₓₐct : temps total exact par interpolation 12 points (colle exactement aux 12 essais). (Dans ton code : predict_T_interp12(..., THETA12)).  calibration
+β (LS→total) = 𝑇ₘₒd⁄(𝐾₁/𝑓₁ + 𝐾₂/𝑓₂ + 𝐾₃/𝑓₃).  app
 
-𝛼 : facteur d’équilibrage qui répartit 𝑇ₑₓₐct entre les tapis selon leurs ancrages :
+𝛼 (ABCD→modèle) = 𝑇ₘₒd⁄(𝐾₁′/𝑓₁ + 𝐾₂′/𝑓₂ + 𝐾₃′/𝑓₃).  app
 
-𝛼 = 𝑇ₑₓₐct⁄(𝐾₁′𝑓₁ + 𝐾₂′𝑓₂ + 𝐾₃′𝑓₃)
+𝑡ᵢ (modèle 1/f) = β·(𝐾ᵢ/𝑓ᵢ) : durées affichées par tapis, cohérentes avec 𝑇ₘₒd.  app
 
-(Calculé dans app.py puis réutilisé partout.)  app
+𝑡ᵢ,ᵦₐₛₑ = 𝐾ᵢ′/𝑓ᵢ (min) : durées d’ancrage utilisées pour le diagnostic (ne servent plus à répartir le total).
 
-𝑡ᵢ,ᵦₐₛₑ = 𝐾ᵢ′𝑓ᵢ (min) : temps “base” par tapis (avant équilibrage).
+𝐷ᵢ = 𝑓ᵢ·𝑡ᵢ = β·𝐾ᵢ (min·Hz) : distances ciblées par les barres de progression.  widgets
 
-𝑡ᵢ⋆ = 𝛼𝐾ᵢ′𝑓ᵢ (min) : durée affichée par tapis (après équilibrage).  app
+𝑢ᵢ = 𝑓ᵢ/𝐾ᵢ′ : capacités relatives pour l’épaisseur (ℎ₁ = ℎ₀, ℎ₂ = ℎ₀·𝑢₁/𝑢₂, ℎ₃ = ℎ₀·𝑢₁/𝑢₃).  calibration/app
 
-𝐷ᵢ = 𝛼𝐾ᵢ′ (en min·Hz) : distance équivalente à parcourir sur la barre du tapis 𝑖. La barre progresse à vitesse 𝑓ᵢ (Hz) et s’arrête quand 𝑓ᵢ × temps = 𝐷ᵢ. (Widget SegmentedBar + boucle _tick).  widgets
-
-
-
-app
-
-ℎ₀ (cm) : épaisseur d’entrée sur T1 (paramètre opérateur).
-
-𝑢ᵢ = 𝑓ᵢ⁄𝐾ᵢ′ (min⁻¹) : capacité de transport calibrée du tapis 𝑖. Sert à déduire l’épaisseur réelle. (Explication §7).
-
-ℎᵢ (cm) : épaisseur de couche après le tapis 𝑖.
-
-1) Entrées saisies (exemple)
-
-𝑓₁ = 49.99 Hz, 𝑓₂ = 99.00 Hz, 𝑓₃ = 99.00 Hz.
-Rappel : tu peux taper 4999, 9900, 9900 (IHM) → la fonction parse_hz convertit en Hz.  utils
-
-2) Temps total — deux niveaux de modèle
-
-Modèle LS (linéaire 4 paramètres)
-
-𝑇ᴸˢ = 𝑑 + 𝐾₁𝑓₁ + 𝐾₂𝑓₂ + 𝐾₃𝑓₃ .
-
-Il vient d’une régression sur les 12 essais. (Fonction compute_times).  calibration
-
-Interpolation exacte 12 points
-On projette (𝑓₁, 𝑓₂, 𝑓₃) dans une base de 12 termes non linéaires (inverses, carrés, croisements…), on résout exactement pour reproduire les 12 essais ; on obtient Θ₁₂ et la prédiction exacte :
-
-𝑇ₑₓₐct = Φ(𝑓₁, 𝑓₂, 𝑓₃) · Θ₁₂ .
-
-(Dans le code : predict_T_interp12(f1,f2,f3, THETA12)).  calibration
-
-Pourquoi deux modèles ?
-
-LS donne une décomposition propre par tapis (utile pour l’affichage segmenté).
-
-L’interpolation donne le total exact observé en atelier.
-On réconcilie les deux via 𝛼 (section suivante).  app
-
-Exemple (chiffres de ton écran)
-
-𝑇ₑₓₐct = 1 h 14 min 55 s = 74.9167 min.
-
-𝑇ᴸˢ = 1 h 47 min 26 s = 107.4333 min.
-
-Écart : 𝑇ₑₓₐct − 𝑇ᴸˢ ≈ −32.51 min.
-
-3) Répartition par tapis (ce que signifient 𝛼, 𝑡ᵢ⋆, 𝐷ᵢ)
-
-On forme la somme base :
-
-Σᵦₐₛₑ = 𝐾₁′𝑓₁ + 𝐾₂′𝑓₂ + 𝐾₃′𝑓₃ (en min),
-
-puis on cale la somme au temps exact :
-
-𝛼 = 𝑇ₑₓₐct⁄Σᵦₐₛₑ  ⇒  𝑡ᵢ⋆ = 𝛼𝐾ᵢ′𝑓ᵢ .
-
-𝑡ᵢ⋆ sont les durées affichées pour chaque tapis.
-
-𝐷ᵢ = 𝛼𝐾ᵢ′ est la distance équivalente cible de la barre 𝑖.
-
-Invariance : 𝑓ᵢ⋅𝑡ᵢ⋆ = 𝐷ᵢ (les barres atteignent 100 % quand cette égalité est vraie).
-Tout ceci est codé dans app.py et dans le widget des barres.  app
-
-
-
-widgets
-
-Exemple (avec 𝐾₁′ = 4725, 𝐾₂′ = 5175, 𝐾₃′ = 15862.5 min·Hz)
-
-Temps base :
-
-𝐾₁′𝑓₁ ≈ 94.52 min, 𝐾₂′𝑓₂ ≈ 52.27 min, 𝐾₃′𝑓₃ ≈ 160.23 min.
-
-Σᵦₐₛₑ ≈ 307.02 min.
-
-𝛼 = 74.9167 / 307.02 ≈ 0.244.
-
-Durées affichées :
-
-𝑡₁⋆ = 𝛼⋅94.52 ≈ 23.07 min (23 min 04 s)
-
-𝑡₂⋆ = 𝛼⋅52.27 ≈ 12.76 min (12 min 45 s)
-
-𝑡₃⋆ = 𝛼⋅160.23 ≈ 39.10 min (39 min 06 s)
-
-∑𝑡ᵢ⋆ = 𝑇ₑₓₐct (vérifié).
-
-Distances de barre :
-
-𝐷₁ = 𝛼𝐾₁′ ≈ 1152.96, 𝐷₂ ≈ 1262.77, 𝐷₃ ≈ 3870.66 (en min·Hz).
-On a exactement 𝑓ᵢ𝑡ᵢ⋆ = 𝐷ᵢ pour chaque tapis.
-
-Ce que sont 𝐾ᵢ′ : ils proviennent des essais d’ancrage (ABCD) et traduisent à quel point, à Hz donné, un tapis « consomme » du temps. Ils sont calculés par calibrate_anchor_from_ABCD.  calibration
-
-4) Comment lire les barres (côté UI)
-
-Chaque barre est un parcours d’une distance 𝐷ᵢ = 𝛼𝐾ᵢ′ à la vitesse 𝑓ᵢ.
-
-Le texte sous la barre affiche : %, vitesse (Hz), temps écoulé / temps cible.
-
-L’animation est gérée dans la boucle _tick ; on met à jour la progression via
-
-distance parcourue = 𝑓ᵢ × (temps écoulé en min).  app
-
-
-
-widgets
-
-5) Vérifications rapides (utile opérateur)
-
-∑𝑡ᵢ,ᵦₐₛₑ = 𝐾₁′𝑓₁ + 𝐾₂′𝑓₂ + 𝐾₃′𝑓₃.
-
-∑𝑡ᵢ⋆ = 𝑇ₑₓₐct.
-
-𝑓ᵢ𝑡ᵢ⋆ = 𝐷ᵢ pour chaque tapis (cohérence prog. barres).
-Ces quantités sont affichées/calculées dans app.py (cartes KPI, « Analyse modèle », etc.).  app
-
-6) Pourquoi deux tapis à la même fréquence n’avancent pas à la même vitesse ?
-
-Parce que chaque tapis a un ancrage 𝐾ᵢ′ propre : à Hz égal, le temps base 𝐾ᵢ′𝑓ᵢ n’est pas le même → vitesses “effectives” différentes.
-Ex. ici, même à 𝑓₂ = 𝑓₃ = 99 Hz, 𝐾₃′𝑓₃ ≫ 𝐾₂′𝑓₂ d’où 𝑡₃⋆ ≫ 𝑡₂⋆. C’est voulu par le modèle et mesuré lors des essais.  calibration
-
-7) Épaisseur de couche (modèle calibré sur les ancrages)
-
-Principe physique : débit 𝑄 ∝ 𝑣 ℎ (largeur et densité constantes).
-Or, avec tes ancrages, la capacité de transport d’un tapis est proportionnelle à
-
-𝑢ᵢ = 𝑓ᵢ⁄𝐾ᵢ′  (unités : min⁻¹)
-
-(dans l’appli, 𝐾ᵢ′ sont les mêmes que pour les barres ; on réutilise donc la calibration existante).  calibration
-
-En régime stationnaire, par conservation du débit :
-
-ℎᵢ = ℎ₀ 𝑢₁⁄𝑢ᵢ = ℎ₀ (𝑓₁ / 𝐾₁′) / (𝑓ᵢ / 𝐾ᵢ′) = ℎ₀ (𝑓₁𝐾ᵢ′) / (𝑓ᵢ𝐾₁′)
-
-et la variation locale d’épaisseur au passage 𝑖−1→𝑖 vaut :
-
-ℎᵢ⁄ℎᵢ₋₁ = 𝑢ᵢ₋₁⁄𝑢ᵢ = (𝑓ᵢ₋₁𝐾ᵢ′) / (𝑓ᵢ𝐾ᵢ₋₁′) ⇒ Δ(𝑖−1→𝑖) = ((𝑓ᵢ₋₁𝐾ᵢ′)/(𝑓ᵢ𝐾ᵢ₋₁′) − 1) × 100 %.
-
-Exemple numérique (avec ℎ₀ = 2.00 cm)
-Capacités : 𝑢₁ = 49.99⁄4725 = 0.01058, 𝑢₂ = 99⁄5175 = 0.01913, 𝑢₃ = 99⁄15862.5 = 0.006241 min⁻¹.
-
-1 → 2 : ℎ₂/ℎ₁ = 𝑢₁/𝑢₂ ≈ 0.553 → Δ₁₂ ≈ −44.7 % → ℎ₂ ≈ 1.106 cm.
-
-2 → 3 : ℎ₃/ℎ₂ = 𝑢₂/𝑢₃ ≈ 3.065 → Δ₂₃ ≈ +206.5 % → ℎ₃ ≈ 3.390 cm.
-
-Interprétation : malgré 𝑓₃ = 99 Hz, T3 évacue moins que T2 car 𝐾₃′ est très grand → sa capacité 𝑢₃ = 𝑓₃/𝐾₃′ est faible → la couche s’épaissit.
-C’est exactement le comportement réel que tu souhaitais capturer (et il repose strictement sur les mêmes ancrages 𝐾ᵢ′ que tes barres).  app
-
-
-
-calibration
 
 8) « Recette de calcul » (prête à coder / relire dans ton code)
 
@@ -1582,56 +1440,43 @@ Lire les entrées 𝑓ᵢ via parse_hz :
 f1 = parse_hz(e1.get()); f2 = parse_hz(e2.get()); f3 = parse_hz(e3.get()).  utils
 
 Temps total :
-T_LS = d + K1/f1 + K2/f2 + K3/f3 (via compute_times),
-T_exact = predict_T_interp12(f1,f2,f3, THETA12).  calibration
+t1_ls, t2_ls, t3_ls, T_mod, (d, K1, K2, K3) = compute_times(f1, f2, f3).  calibration
 
 Répartition :
-sum_base = K1_DIST/f1 + K2_DIST/f2 + K3_DIST/f3;
-alpha = T_exact / sum_base;
-t1s = alpha*(K1_DIST/f1) etc. ;
-D1 = alpha*K1_DIST etc. (barres).  app
+sum_ls = t1_ls + t2_ls + t3_ls;
+beta = T_mod / sum_ls (si sum_ls > 0 sinon beta = 1) ;
+t1 = beta * t1_ls, etc. (durées affichées) ;
+D1 = f1 * t1, etc. (cibles des barres).  app
+
+Diagnostics ancrage :
+sum_base = K1_DIST/f1 + K2_DIST/f2 + K3_DIST/f3 ;
+alpha_diag = T_mod / sum_base (utilisé uniquement dans l’encart explicatif).  app
 
 Épaisseur (si ℎ₀ fourni) :
 u1 = f1/K1_DIST; u2 = f2/K2_DIST; u3 = f3/K3_DIST;
 h1 = h0; h2 = h0*(u1/u2); h3 = h0*(u1/u3) ;
-Δ12% = ((f1*K2_DIST)/(f2*K1_DIST) - 1)*100;
-Δ23% = ((f2*K3_DIST)/(f3*K2_DIST) - 1)*100.
-(Ces formules s’intègrent proprement à app.py et aux badges que tu affiches.)  app
+Δ12% = ((f1*K2_DIST)/(f2*K1_DIST) - 1)*100 ;
+Δ23% = ((f2*K3_DIST)/(f3*K2_DIST) - 1)*100.  app
 
-
-
-calibration
 
 9) Ce qu’il faut retenir
 
-Les barres visualisent un parcours 𝐷ᵢ = 𝛼𝐾ᵢ′ à la vitesse 𝑓ᵢ.
+Les barres visualisent un parcours 𝐷ᵢ = β·𝐾ᵢ à la vitesse 𝑓ᵢ.
 
-Les durées par tapis sont 𝑡ᵢ⋆ = 𝛼𝐾ᵢ′/𝑓ᵢ et sommées donnent 𝑇ₑₓₐct.
+Les durées par tapis sont 𝑡ᵢ = β·(𝐾ᵢ/𝑓ᵢ) et leur somme redonne 𝑇ₘₒd.
 
-L’épaisseur ne suit pas 1/𝑓 mais 1/(𝑓/𝐾′) : elle dépend des capacités 𝑢ᵢ = 𝑓ᵢ/𝐾ᵢ′.
+L’épaisseur dépend des capacités 𝑢ᵢ = 𝑓ᵢ/𝐾ᵢ′ (monotone en 𝑓ᵢ).
 
-Deux tapis au même Hz peuvent évacuer différemment si leurs 𝐾′ diffèrent (cas typique T2 vs T3).
-Tout ceci est déjà en place dans ton code (fonctions et constantes ci‑dessus).  app
+Les ancrages ABCD servent encore de repère mais ne conditionnent plus la somme totale.
 
-
-
-calibration
 
 Références de code (où tout se trouve)
 
 Entrées package / exécution : __init__.py, __main__.py, Main.py.  __init__
 
+Application & UI (barres, KPI, calculs, β, _tick) : app.py.  app
 
-
-__main__
-
-
-
-Main
-
-Application & UI (barres, KPI, calculs, 𝛼, _tick) : app.py.  app
-
-Calibration & modèles (LS, interpolation 12 points, ancrages 𝐾ᵢ′) : calibration.py.  calibration
+Calibration & modèles (LS, ancrages) : calibration.py.  calibration
 
 Config (tick, valeurs par défaut) : config.py.  config
 
@@ -1641,19 +1486,20 @@ Helpers (parse des Hz/IHM, formats) : utils.py.  utils
 
 Widgets (dont SegmentedBar) : widgets.py.  widgets
 
-Annexe — Exemple chiffré complet (cas de ta capture)
+Annexe — Exemple chiffré complet (cas de la capture 49.99/99/99)
 
-Entrées : 𝑓₁ = 49.99, 𝑓₂ = 99, 𝑓₃ = 99 Hz ; 𝐾₁′ = 4725, 𝐾₂′ = 5175, 𝐾₃′ = 15862.5 min·Hz.
+Entrées : 𝑓₁ = 49.99, 𝑓₂ = 99, 𝑓₃ = 99 Hz ;
 
-Somme base : 94.52 + 52.27 + 160.23 = 307.02 min.
+Durées LS brutes : 𝐾₁/𝑓₁ = 66.29 min, 𝐾₂/𝑓₂ = 13.69 min, 𝐾₃/𝑓₃ = 124.83 min → Σ = 204.81 min.
 
-Temps exact : 𝑇ₑₓₐct = 74.9167 min → 𝛼 = 0.2440.
+Temps modèle : 𝑇ₘₒd = 107.43 min ⇒ β = 0.525.
 
-Durées par tapis : 𝑡₁⋆ = 23.07 min, 𝑡₂⋆ = 12.76 min, 𝑡₃⋆ = 39.10 min.
+Durées affichées : 𝑡₁ = 34.77 min, 𝑡₂ = 7.18 min, 𝑡₃ = 65.48 min (Σ = 107.43 min).
 
-Distances barres : 𝐷₁ = 1152.96, 𝐷₂ = 1262.77, 𝐷₃ = 3870.66 (min·Hz).
+Distances barres : 𝐷₁ = 1 738.32, 𝐷₂ = 710.91, 𝐷₃ = 6 482.29 (min·Hz).
 
-Épaisseurs (si ℎ₀ = 2.00 cm) : 𝑢₁ = 0.01058, 𝑢₂ = 0.01913, 𝑢₃ = 0.006241 → ℎ₂ ≈ 1.106 cm (−44.7 % vs T1), ℎ₃ ≈ 3.390 cm (+206.5 % vs T2)."""
+Épaisseurs (ℎ₀ = 2.00 cm) : 𝑢₁ = 0.01058, 𝑢₂ = 0.01913, 𝑢₃ = 0.00624 → ℎ₂ ≈ 1.11 cm (−44.7 % vs T1), ℎ₃ ≈ 3.39 cm (+206.5 % vs T2).
+"""
 
         # Fenêtre modale
         win = tk.Toplevel(self)
