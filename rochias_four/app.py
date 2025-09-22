@@ -25,6 +25,13 @@ from .calibration import (
     METRICS_REG,
 )
 from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS
+from .calc_models import (
+    correction_recouvrement,
+    parts_independantes,
+    parts_reparties,
+    total_minutes_anchor,
+    total_minutes_synergy,
+)
 from .calculations import compute_simulation_plan, thickness_and_accum
 from .flow import GapEvent, holes_for_all_belts
 from .theme import (
@@ -101,6 +108,7 @@ class FourApp(tk.Tk):
         self.kpi_labels = {}
         self.stage_rows = []
         self.operator_mode = True
+        self.parts_mode = tk.StringVar(value="repartition")
 
         self.logo_img = None
         self._error_after = None
@@ -125,6 +133,8 @@ class FourApp(tk.Tk):
         self.after(0, self._load_prefs)
         # Ajuste la taille à ce que l'écran peut afficher, sans couper
         self.after(0, self._fit_to_screen)
+
+        self.parts_mode.trace_add("write", self._on_parts_mode_changed)
 
     def _fit_to_screen(self, margin=60):
         self.update_idletasks()
@@ -552,6 +562,30 @@ class FourApp(tk.Tk):
             value_lbl.config(text="--")
             detail_lbl.config(text="--")
 
+    def _hide_correction_row(self):
+        if hasattr(self, "correction_row") and self.correction_row.winfo_manager():
+            try:
+                self.correction_row.pack_forget()
+            except Exception:
+                pass
+        if hasattr(self, "correction_value"):
+            self.correction_value.config(text="--")
+        if hasattr(self, "correction_detail"):
+            self.correction_detail.config(text="--")
+
+    def _show_correction_row(self, corr: float, sum_indep: float):
+        if not hasattr(self, "correction_row"):
+            return
+        if not self.correction_row.winfo_manager():
+            try:
+                self.correction_row.pack(fill="x", pady=6)
+            except Exception:
+                pass
+        self.correction_value.config(text=f"{corr:+.2f} min")
+        self.correction_detail.config(
+            text=f"Σ indépendantes = {sum_indep:.2f} min | {fmt_hms(sum_indep * 60)}"
+        )
+
     def _build_ui(self):
         header = self._card(self, fill="x", padx=18, pady=(16, 8), padding=(28, 22))
         header.columnconfigure(0, weight=1)
@@ -614,10 +648,10 @@ class FourApp(tk.Tk):
             detail = ttk.Label(pill, text="--", style="HeroStatDetail.TLabel")
             detail.pack(anchor="w", pady=(2, 0))
             self.kpi_labels[key] = (value, detail)
-        Tooltip(self.kpi_labels["total"][0], "Temps total corrigé par interpolation exacte (12 points)")
-        Tooltip(self.kpi_labels["t1"][0], "Durée mécanique (LS) : K_i/f_i")
-        Tooltip(self.kpi_labels["t2"][0], "Durée mécanique (LS) : K_i/f_i")
-        Tooltip(self.kpi_labels["t3"][0], "Durée mécanique (LS) : K_i/f_i")
+        Tooltip(self.kpi_labels["total"][0], "Temps total modèle 1/f + synergie.")
+        Tooltip(self.kpi_labels["t1"][0], "Durée affichée selon le mode de parts sélectionné.")
+        Tooltip(self.kpi_labels["t2"][0], "Durée affichée selon le mode de parts sélectionné.")
+        Tooltip(self.kpi_labels["t3"][0], "Durée affichée selon le mode de parts sélectionné.")
 
         body = VScrollFrame(self)
         body.pack(fill="both", expand=True)
@@ -788,11 +822,11 @@ class FourApp(tk.Tk):
         card_out.bind("<Configure>", self._on_resize_wrapping)
         card_out.columnconfigure(0, weight=1)
         ttk.Label(card_out, text="Résultats", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
-        self.lbl_total_big = ttk.Label(card_out, text="Temps total (modèle 1/f) : --", style="Result.TLabel")
+        self.lbl_total_big = ttk.Label(card_out, text="Temps total (modèle synergie) : --", style="Result.TLabel")
         self.lbl_total_big.pack(anchor="w", pady=(0, 10))
         ttk.Label(
             card_out,
-            text="Modèle : T = d + K1/f1 + K2/f2 + K3/f3  (f = IHM/100). Régression LS (4 paramètres) pour le total et la répartition par tapis.",
+            text="Modèle : T = B + K1/f1 + K2/f2 + K3/f3 + S/(f1·f2·f3). Régression 1/f + synergie pour le total ; répartition pondérée par ancrage.",
             style="HeroSub.TLabel",
             wraplength=820,
             justify="left",
@@ -814,10 +848,35 @@ class FourApp(tk.Tk):
         self.lbl_analysis_info.pack(anchor="w", pady=(0, 12))
         self._responsive_labels.append((self.lbl_analysis_info, 0.85))
 
+        parts_selector = ttk.Frame(card_out, style="CardInner.TFrame")
+        parts_selector.pack(fill="x", pady=(0, 12))
+        ttk.Label(parts_selector, text="Parts :", style="HeroSub.TLabel").pack(side="left")
+        ttk.Radiobutton(
+            parts_selector,
+            text="Répartition du total",
+            value="repartition",
+            variable=self.parts_mode,
+            command=self._on_parts_mode_changed,
+        ).pack(side="left", padx=(12, 0))
+        ttk.Radiobutton(
+            parts_selector,
+            text="Indépendant (diag)",
+            value="independant",
+            variable=self.parts_mode,
+            command=self._on_parts_mode_changed,
+        ).pack(side="left", padx=(12, 0))
+
         export_row = ttk.Frame(card_out, style="CardInner.TFrame")
         export_row.pack(fill="x", pady=(0, 10))
         ttk.Button(export_row, text="⬇ Export CSV", command=self.export_csv, style="Ghost.TButton").pack(side="left")
         ttk.Button(export_row, text="🖨 Export PS", command=self.export_bars_ps, style="Ghost.TButton").pack(side="left", padx=(8, 0))
+
+        self.parts_section_label = ttk.Label(
+            card_out,
+            text="Répartition du total (somme = T)",
+            style="CardHeading.TLabel",
+        )
+        self.parts_section_label.pack(anchor="w", pady=(8, 0))
 
         stage_list = ttk.Frame(card_out, style="CardInner.TFrame")
         stage_list.pack(fill="x", pady=(0, 12))
@@ -834,6 +893,23 @@ class FourApp(tk.Tk):
             detail_lbl = ttk.Label(row, text="--", style="StageTimeDetail.TLabel")
             detail_lbl.grid(row=1, column=2, sticky="e")
             self.stage_rows.append({"freq": freq_lbl, "time": time_lbl, "detail": detail_lbl})
+
+        self.correction_row = ttk.Frame(stage_list, style="StageRow.TFrame")
+        self.correction_row.columnconfigure(2, weight=1)
+        self.correction_title = ttk.Label(
+            self.correction_row,
+            text="Correction de recouvrement",
+            style="StageTitle.TLabel",
+        )
+        self.correction_title.grid(row=0, column=0, rowspan=2, sticky="w")
+        self.correction_value = ttk.Label(self.correction_row, text="--", style="StageTime.TLabel")
+        self.correction_value.grid(row=0, column=2, sticky="e")
+        self.correction_detail = ttk.Label(
+            self.correction_row,
+            text="--",
+            style="StageTimeDetail.TLabel",
+        )
+        self.correction_detail.grid(row=1, column=2, sticky="e")
 
         ttk.Separator(card_out, style="Dark.TSeparator").pack(fill="x", pady=8)
         ttk.Label(card_out, text="Analyse modèle", style="Subtle.TLabel").pack(anchor="w")
@@ -904,6 +980,78 @@ class FourApp(tk.Tk):
             else:
                 self.mode_button.config(text="Mode opérateur")
 
+    def _on_parts_mode_changed(self, *_):
+        mode = self.parts_mode.get()
+        if mode not in {"repartition", "independant"}:
+            self.parts_mode.set("repartition")
+            mode = "repartition"
+        if not self.last_calc:
+            if hasattr(self, "parts_section_label"):
+                if mode == "independant":
+                    self.parts_section_label.config(
+                        text="Contribution équivalente (diagnostic) (ne somme pas au total)"
+                    )
+                    self._hide_correction_row()
+                else:
+                    self.parts_section_label.config(text="Répartition du total (somme = T)")
+                    self._hide_correction_row()
+            return
+        self._apply_parts_mode()
+
+    def _apply_parts_mode(self):
+        data = self.last_calc
+        if not data:
+            return
+        mode = self.parts_mode.get()
+        total = data.get("T_total", 0.0)
+        f_values = (data.get("f1"), data.get("f2"), data.get("f3"))
+        if mode == "independant":
+            parts = data.get("parts_indep")
+            heading = "Contribution équivalente (diagnostic) (ne somme pas au total)"
+            corr = data.get("correction")
+            sum_indep = data.get("sum_indep")
+            if parts is None:
+                parts = parts_independantes(*f_values)
+            if corr is None:
+                corr = correction_recouvrement(total, *f_values)
+            if sum_indep is None and parts is not None:
+                sum_indep = sum(parts)
+            if sum_indep is None:
+                sum_indep = 0.0
+            self._show_correction_row(corr or 0.0, sum_indep)
+        else:
+            parts = data.get("parts_reparties")
+            heading = "Répartition du total (somme = T)"
+            if parts is None:
+                parts = parts_reparties(total, *f_values)
+            self._hide_correction_row()
+        if parts is None:
+            return
+        parts = tuple(parts)
+        if hasattr(self, "parts_section_label"):
+            self.parts_section_label.config(text=heading)
+        for row, part, freq in zip(self.stage_rows, parts, f_values):
+            row["time"].config(text=fmt_minutes(part))
+            row["detail"].config(text=f"{part:.2f} min | {fmt_hms(part * 60)}")
+            if freq is not None:
+                row["freq"].config(text=f"{freq:.2f} Hz")
+        self._update_kpi(
+            "t1",
+            fmt_minutes(parts[0]),
+            f"{parts[0]:.2f} min | {fmt_hms(parts[0] * 60)}",
+        )
+        self._update_kpi(
+            "t2",
+            fmt_minutes(parts[1]),
+            f"{parts[1]:.2f} min | {fmt_hms(parts[1] * 60)}",
+        )
+        self._update_kpi(
+            "t3",
+            fmt_minutes(parts[2]),
+            f"{parts[2]:.2f} min | {fmt_hms(parts[2] * 60)}",
+        )
+        data["parts_mode"] = mode
+
     # ---------- Actions ----------
     def on_reset(self):
         self._cancel_after()
@@ -933,7 +1081,10 @@ class FourApp(tk.Tk):
         for badge in self.accum_badges:
             if badge is not None:
                 badge.config(text="", style="BadgeNeutral.TLabel")
-        self.lbl_total_big.config(text="Temps total (modèle 1/f) : --")
+        self.lbl_total_big.config(text="Temps total (modèle synergie) : --")
+        if hasattr(self, "parts_section_label"):
+            self.parts_section_label.config(text="Répartition du total (somme = T)")
+        self._hide_correction_row()
         self.lbl_analysis_info.config(text="")
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="disabled", text="⏸ Pause")
@@ -981,10 +1132,13 @@ class FourApp(tk.Tk):
         t1_ls, t2_ls, t3_ls = calc.ls_durations
         T_LS = calc.total_model_minutes
         d, K1, K2, K3 = calc.model_params
-        T_total = calc.total_minutes
+        T_model_calc = calc.total_minutes
+        T_total = total_minutes_synergy(f1, f2, f3)
         T_exp = T_total
-        anchor_terms = (K1_DIST / f1, K2_DIST / f2, K3_DIST / f3)
+        anchor_terms = tuple(parts_independantes(f1, f2, f3))
         anchor_model_total = extras.get("anchor_total_model", float("nan"))
+        if not math.isfinite(anchor_model_total):
+            anchor_model_total = total_minutes_anchor(f1, f2, f3)
         anchor_model_split = extras.get("anchor_split_model", calc.anchor_durations)
         ols_split = extras.get("ols_split", None)
 
@@ -992,6 +1146,8 @@ class FourApp(tk.Tk):
             self._show_error("Temps calculé ≤ 0 : vérifie les entrées et le calibrage.")
             return
 
+        parts_split = tuple(parts_reparties(T_total, f1, f2, f3))
+        correction = correction_recouvrement(T_total, f1, f2, f3)
         t1s, t2s, t3s = anchor_terms
         sum_base = t1s + t2s + t3s
         sum_ls = t1_ls + t2_ls + t3_ls
@@ -1002,10 +1158,8 @@ class FourApp(tk.Tk):
         self.seg_speeds = [stage.frequency_hz for stage in calc.stages]
         self.seg_durations = [stage.duration_min * 60.0 for stage in calc.stages]
 
-        for row, freq, ts in zip(self.stage_rows, (f1, f2, f3), (t1s, t2s, t3s)):
+        for row, freq in zip(self.stage_rows, (f1, f2, f3)):
             row["freq"].config(text=f"{freq:.2f} Hz")
-            row["time"].config(text=fmt_minutes(ts))
-            row["detail"].config(text=f"{ts:.2f} min | {fmt_hms(ts * 60)}")
 
         self.lbl_total_big.config(
             text=f"Temps total (modèle synergie) : {fmt_minutes(T_total)} | {fmt_hms(T_total * 60)}"
@@ -1076,9 +1230,6 @@ class FourApp(tk.Tk):
         self.lbl_analysis_info.config(text=info)
 
         self._update_kpi("total", fmt_minutes(T_total), f"{T_total:.2f} min | {fmt_hms(T_total * 60)}")
-        self._update_kpi("t1", fmt_minutes(t1s), f"{t1s:.2f} min | {fmt_hms(t1s * 60)} | {f1:.2f} Hz")
-        self._update_kpi("t2", fmt_minutes(t2s), f"{t2s:.2f} min | {fmt_hms(t2s * 60)} | {f2:.2f} Hz")
-        self._update_kpi("t3", fmt_minutes(t3s), f"{t3s:.2f} min | {fmt_hms(t3s * 60)} | {f3:.2f} Hz")
 
         self._update_stat_card("ls", f"{T_LS:.2f} min", fmt_hms(T_LS * 60))
         sum_ls = t1_ls + t2_ls + t3_ls
@@ -1102,14 +1253,21 @@ class FourApp(tk.Tk):
             t1=t1_ls, t2=t2_ls, t3=t3_ls,
             t1_base=anchor_terms[0], t2_base=anchor_terms[1], t3_base=anchor_terms[2],
             t1_star=t1s, t2_star=t2s, t3_star=t3s,
-            T_LS=T_LS, T_exp=T_total, alpha=alpha_ratio, beta=scale_ls,
+            T_LS=T_LS, T_exp=T_total, T_total=T_total, T_model_calc=T_model_calc,
+            alpha=alpha_ratio, beta=scale_ls,
             sum_t=t1_ls + t2_ls + t3_ls, sum_base=sum_base, delta=delta_total,
             delta_parts=delta_parts,
             K1_dist=K1_DIST, K2_dist=K2_DIST, K3_dist=K3_DIST,
             anchor_model_total=anchor_model_total,
             anchor_model_split=anchor_model_split,
             ols_split=ols_split,
+            parts_reparties=parts_split,
+            parts_indep=anchor_terms,
+            correction=correction,
+            sum_indep=sum_base,
         )
+
+        self._apply_parts_mode()
 
         self.total_duration = sum(self.seg_durations)
         self.notified_stage1 = False
