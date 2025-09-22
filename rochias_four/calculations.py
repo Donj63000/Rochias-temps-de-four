@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Tuple
 
 from .calibration import (
+    DEFAULT_ANCHOR,
+    DEFAULT_OLS,
+    DEFAULT_SYNERGY,
     K1_DIST,
     K2_DIST,
     K3_DIST,
     compute_times,
+    is_monotone_decreasing_in_each_f,
+    split_contributions,
+    total_time_minutes,
 )
 
 
@@ -34,6 +40,7 @@ class CalculationResult:
     anchor_durations: Tuple[float, float, float]
     alpha_anchor: float
     beta_ls: float
+    extras: Dict[str, object] = field(default_factory=dict)
 
 
 def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResult:
@@ -45,13 +52,23 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
     """
 
     t1_ls, t2_ls, t3_ls, total_ls, params = compute_times(f1, f2, f3)
-    anchor_durations = (
+
+    anchor_terms = (
         K1_DIST / f1,
         K2_DIST / f2,
         K3_DIST / f3,
     )
-    total_anchor = sum(anchor_durations)
-    alpha = total_ls / total_anchor if total_anchor > 0 else float("nan")
+    sum_anchor_terms = sum(anchor_terms)
+
+    anchor_model_total = total_time_minutes(f1, f2, f3, model="anchor", anch=DEFAULT_ANCHOR)
+    anchor_model_split = split_contributions(anchor_model_total, f1, f2, f3, split="anchor", anch=DEFAULT_ANCHOR)
+
+    total_synergy = total_time_minutes(f1, f2, f3, model="synergy", syn=DEFAULT_SYNERGY)
+    synergy_split = split_contributions(total_synergy, f1, f2, f3, split="anchor", anch=DEFAULT_ANCHOR)
+
+    ols_split = split_contributions(total_ls, f1, f2, f3, split="model", ols=DEFAULT_OLS)
+
+    alpha = total_synergy / anchor_model_total if anchor_model_total > 0 else float("nan")
     sum_ls = t1_ls + t2_ls + t3_ls
     beta = total_ls / sum_ls if sum_ls > 0 else float("nan")
 
@@ -59,20 +76,35 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
         StagePlan(freq, duration, distance)
         for freq, duration, distance in zip(
             (f1, f2, f3),
-            anchor_durations,
+            synergy_split,
             (K1_DIST, K2_DIST, K3_DIST),
         )
     )
 
+    extras: Dict[str, object] = {
+        "anchor_terms_base": anchor_terms,
+        "anchor_total_base": sum_anchor_terms,
+        "anchor_total_model": anchor_model_total,
+        "anchor_split_model": anchor_model_split,
+        "synergy_split": synergy_split,
+        "synergy_total": total_synergy,
+        "ols_split": ols_split,
+        "anchor_B": DEFAULT_ANCHOR.B,
+        "ols_B": DEFAULT_OLS.B,
+        "synergy_params": DEFAULT_SYNERGY,
+        "monotone_ok": is_monotone_decreasing_in_each_f(f1, f2, f3, model="synergy", syn=DEFAULT_SYNERGY),
+    }
+
     return CalculationResult(
         stages=stages,
-        total_minutes=total_anchor,
+        total_minutes=total_synergy,
         ls_durations=(t1_ls, t2_ls, t3_ls),
         total_model_minutes=total_ls,
         model_params=params,
-        anchor_durations=anchor_durations,
+        anchor_durations=synergy_split,
         alpha_anchor=alpha,
         beta_ls=beta,
+        extras=extras,
     )
 
 
