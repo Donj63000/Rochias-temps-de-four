@@ -15,11 +15,8 @@ from tkinter import filedialog, scrolledtext, ttk
 
 from .calibration import (
     D_R,
-    K1_DIST,
     K1_R,
-    K2_DIST,
     K2_R,
-    K3_DIST,
     K3_R,
     METRICS_EXACT,
     METRICS_REG,
@@ -32,6 +29,7 @@ from .calc_models import (
     total_minutes_anchor,
     total_minutes_synergy,
 )
+from .calibration_overrides import load_anchor_from_disk, get_current_anchor
 from .calculations import compute_simulation_plan, thickness_and_accum
 from .flow import GapEvent, holes_for_all_belts
 from .theme import (
@@ -52,6 +50,7 @@ from .theme import (
 from .utils import fmt_hms, fmt_minutes, parse_hz
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
 from .graphs import GraphWindow
+from .calibration_window import CalibrationWindow
 
 
 class FourApp(tk.Tk):
@@ -118,6 +117,7 @@ class FourApp(tk.Tk):
 
         # UI
         self._build_ui()
+        load_anchor_from_disk()
         self.set_density(True)
         self._set_default_inputs()
         self.set_operator_mode(True)
@@ -776,7 +776,7 @@ class FourApp(tk.Tk):
 
         btns = ttk.Frame(card_in, style="CardInner.TFrame")
         btns.pack(fill="x", pady=(4, 8))
-        btns.columnconfigure(5, weight=1)
+        btns.columnconfigure(6, weight=1)
         self.btn_calculer = ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton")
         self.btn_calculer.grid(row=0, column=0, padx=(0, 12), pady=2, sticky="w")
         self.btn_start = ttk.Button(
@@ -797,7 +797,8 @@ class FourApp(tk.Tk):
         self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2, sticky="w")
         ttk.Button(btns, text="↺ Réinitialiser", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2, sticky="w")
         ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
-        ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=5, pady=2, sticky="e")
+        ttk.Button(btns, text="Calibrer…", command=lambda: CalibrationWindow(self), style="Ghost.TButton").grid(row=0, column=5, padx=(12, 0), pady=2, sticky="e")
+        ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=6, pady=2, sticky="e")
 
         self.btn_feed_stop = ttk.Button(
             btns,
@@ -1159,6 +1160,13 @@ class FourApp(tk.Tk):
         except Exception as e:
             self._show_error(f"Impossible d'ouvrir le graphique : {e}")
 
+    def refresh_after_calibration(self):
+        """Recalcule immédiatement en relisant les ancrages courants."""
+        try:
+            self.on_calculer()
+        except Exception:
+            pass
+
     def on_calculer(self):
         if self.animating or self.paused:
             self.on_reset()
@@ -1193,6 +1201,7 @@ class FourApp(tk.Tk):
             self._show_error("Temps calculé ≤ 0 : vérifie les entrées et le calibrage.")
             return
 
+        anch = get_current_anchor()
         parts_split = tuple(parts_reparties(T_total, f1, f2, f3))
         t1_rep, t2_rep, t3_rep = parts_split
         correction = correction_recouvrement(T_total, f1, f2, f3)
@@ -1266,7 +1275,7 @@ class FourApp(tk.Tk):
             f"Total modèle 1/f : {fmt_hms(T_LS * 60)} ({T_LS:.2f} min) | d = {d:+.3f} min | β (LS→total) = {scale_ls:.3f}\n"
             f"Σ ancrage brut : {fmt_hms(sum_base * 60)} ({sum_base:.2f} min) | α (synergie/ancrage) = {alpha_ratio:.3f}\n"
             f"Δ total − Σ ancrage : {delta_parts:+.2f} min\n"
-            f"K1'={K1_DIST:.1f}  K2'={K2_DIST:.1f}  K3'={K3_DIST:.1f}"
+            f"K1'={anch.K1:.1f}  K2'={anch.K2:.1f}  K3'={anch.K3:.1f}"
         )
         self.lbl_analysis_info.config(text=info)
 
@@ -1300,7 +1309,7 @@ class FourApp(tk.Tk):
             alpha=alpha_ratio, beta=scale_ls,
             sum_t=t1_ls + t2_ls + t3_ls, sum_base=sum_base, delta=delta_total,
             delta_parts=delta_parts,
-            K1_dist=K1_DIST, K2_dist=K2_DIST, K3_dist=K3_DIST,
+            K1_dist=anch.K1, K2_dist=anch.K2, K3_dist=anch.K3,
             anchor_model_total=anchor_model_total,
             anchor_model_split=anchor_model_split,
             ols_split=ols_split,
@@ -1562,10 +1571,11 @@ class FourApp(tk.Tk):
                 T_LS = plan.total_model_minutes
                 T_exp = plan.total_minutes
                 d, K1, K2, K3 = plan.model_params
+                anch = get_current_anchor()
                 anchor_terms = (
-                    K1_DIST / f1,
-                    K2_DIST / f2,
-                    K3_DIST / f3,
+                    anch.K1 / f1,
+                    anch.K2 / f2,
+                    anch.K3 / f3,
                 )
                 t1_indep, t2_indep, t3_indep = anchor_terms
                 sum_base = sum(anchor_terms)
@@ -1585,7 +1595,7 @@ class FourApp(tk.Tk):
                     sum_base=sum_base,
                     delta=T_exp - T_LS,
                     delta_parts=T_exp - sum_base,
-                    K1_dist=K1_DIST, K2_dist=K2_DIST, K3_dist=K3_DIST,
+                    K1_dist=anch.K1, K2_dist=anch.K2, K3_dist=anch.K3,
                     anchor_model_total=extras.get("anchor_total_model"),
                     anchor_model_split=extras.get("anchor_split_model"),
                     ols_split=extras.get("ols_split"),
@@ -1640,7 +1650,7 @@ class FourApp(tk.Tk):
  toute valeur >200 est automatiquement divisée par 100.  utils
 
 𝐾₁′, 𝐾₂′, 𝐾₃′ : distances d’ancrage (min·Hz) issues des essais A/B/C/D ; elles servent d’indicateurs pour les rapports d’épaisseur.
- (Dans le code : K1_DIST, K2_DIST, K3_DIST).  calibration
+ (Dans le code : get_current_anchor().K1, .K2, .K3).  calibration_overrides
 
 𝑑, 𝐾₁, 𝐾₂, 𝐾₃ : paramètres du modèle 1/f (régression LS) donnant le temps total :
 𝑇ₘₒd = 𝑑 + 𝐾₁/𝑓₁ + 𝐾₂/𝑓₂ + 𝐾₃/𝑓₃.  calibration
@@ -1667,18 +1677,19 @@ Temps total :
 t1_ls, t2_ls, t3_ls, T_mod, (d, K1, K2, K3) = compute_times(f1, f2, f3).  calibration
 
 Répartition :
-t1 = K1_DIST / f1; t2 = K2_DIST / f2; t3 = K3_DIST / f3 (durées affichées) ;
-D1 = K1_DIST, etc. (cibles fixes des barres).  app
+anch = get_current_anchor();
+t1 = anch.K1 / f1; t2 = anch.K2 / f2; t3 = anch.K3 / f3 (durées affichées) ;
+D1 = anch.K1, etc. (cibles fixes des barres).  app
 
 Diagnostics ancrage :
-sum_base = K1_DIST/f1 + K2_DIST/f2 + K3_DIST/f3 ;
+sum_base = anch.K1/f1 + anch.K2/f2 + anch.K3/f3 ;
 alpha_diag = T_mod / sum_base (utilisé uniquement dans l’encart explicatif).  app
 
 Épaisseur (si ℎ₀ fourni) :
-u1 = f1/K1_DIST; u2 = f2/K2_DIST; u3 = f3/K3_DIST;
+u1 = f1/anch.K1; u2 = f2/anch.K2; u3 = f3/anch.K3;
 h1 = h0; h2 = h0*(u1/u2); h3 = h0*(u1/u3) ;
-Δ12% = ((f1*K2_DIST)/(f2*K1_DIST) - 1)*100 ;
-Δ23% = ((f2*K3_DIST)/(f3*K2_DIST) - 1)*100.  app
+Δ12% = ((f1*anch.K2)/(f2*anch.K1) - 1)*100 ;
+Δ23% = ((f2*anch.K3)/(f3*anch.K2) - 1)*100.  app
 
 
 9) Ce qu’il faut retenir

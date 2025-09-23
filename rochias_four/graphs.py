@@ -44,8 +44,8 @@ def _piecewise_by_cells(t0: float, L: float, h_in: float, h_out: float, profile)
 
     return [x0, x1, x2, x3], [y0, y1, y2, y3]
 
-from .calibration import K1_DIST, K2_DIST, K3_DIST
 from .calc_models import parts_reparties, total_minutes_synergy
+from .calibration_overrides import get_current_anchor
 from .utils import parse_hz, fmt_hms
 from .config import TICK_SECONDS
 
@@ -101,7 +101,8 @@ def _heights_cm(f1: float, f2: float, f3: float, h0_cm: float):
     """
     Épaisseurs par tapis à partir des capacités u_i = f_i / K'_i (mêmes K' que l'app).
     """
-    u1, u2, u3 = (f1 / K1_DIST), (f2 / K2_DIST), (f3 / K3_DIST)
+    anch = get_current_anchor()
+    u1, u2, u3 = (f1 / anch.K1), (f2 / anch.K2), (f3 / anch.K3)
     h1 = h0_cm
     h2 = h0_cm * (u1 / u2) if u2 > 0 else float("inf")
     h3 = h0_cm * (u1 / u3) if u3 > 0 else float("inf")
