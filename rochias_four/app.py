@@ -47,6 +47,7 @@ from .theme import (
     SUBTEXT,
     TEXT,
 )
+from .theme_manager import ThemeManager, STYLE_NAMES
 from .utils import fmt_hms, fmt_minutes, parse_hz
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
 from .graphs import GraphWindow
@@ -66,6 +67,11 @@ class FourApp(tk.Tk):
                     pass
 
         super().__init__()
+        self.theme = ThemeManager(self)
+        self.theme.load_saved_or("light")
+        self._update_theme_palette()
+        self._sync_theme_attributes()
+
         self.title("Four • 3 Tapis — Calcul & Barres (Temps réel)")
         self.configure(bg=BG)
         # Tu peux garder la géométrie initiale si tu veux
@@ -82,11 +88,7 @@ class FourApp(tk.Tk):
         self.bars_heading_label: ttk.Label | None = None
 
         self._init_styles()
-        self.option_add("*TButton.Cursor", "hand2")
-        self.option_add("*TRadiobutton.Cursor", "hand2")
-        self.option_add("*Entry.insertBackground", TEXT)
-        self.option_add("*Entry.selectBackground", ACCENT)
-        self.option_add("*Entry.selectForeground", "#ffffff")
+        self._apply_option_defaults()
 
         # États animation
         self.animating = False
@@ -108,6 +110,7 @@ class FourApp(tk.Tk):
         self.stage_status = []
         self.kpi_labels = {}
         self.stage_rows = []
+        self.graph_window = None
         self.operator_mode = True
         self.parts_mode = tk.StringVar(value="repartition")
 
@@ -138,6 +141,134 @@ class FourApp(tk.Tk):
         self.after(0, self._fit_to_screen)
 
         self.parts_mode.trace_add("write", self._on_parts_mode_changed)
+
+    @staticmethod
+    def _blend_colors(color_a: str, color_b: str, ratio: float) -> str:
+        ratio = max(0.0, min(1.0, float(ratio)))
+        def _to_rgb(value: str) -> tuple[int, int, int]:
+            value = value.strip().lstrip("#")
+            if len(value) != 6:
+                value = value[:6].ljust(6, "0")
+            return tuple(int(value[i:i+2], 16) for i in (0, 2, 4))
+
+        r1, g1, b1 = _to_rgb(color_a)
+        r2, g2, b2 = _to_rgb(color_b)
+        r = round(r1 + (r2 - r1) * ratio)
+        g = round(g1 + (g2 - g1) * ratio)
+        b = round(b1 + (b2 - b1) * ratio)
+        return f"#{max(0, min(255, r)):02X}{max(0, min(255, g)):02X}{max(0, min(255, b)):02X}"
+
+    def _update_theme_palette(self):
+        from . import theme as theme_constants
+
+        colors = self.theme.colors
+        blend = self._blend_colors
+        lighten = lambda c, amount: blend(c, "#FFFFFF", amount)
+        darken = lambda c, amount: blend(c, "#000000", amount)
+
+        secondary = blend(colors["panel"], colors["surface"], 0.5)
+        track = blend(colors["panel"], colors["bg"], 0.5)
+        accent_hover = darken(colors["accent"], 0.2) if self.theme.current == "light" else lighten(colors["accent"], 0.2)
+        secondary_hover_target = colors["surface"] if self.theme.current == "dark_rouge" else colors["bg"]
+
+        palette = {
+            "BG": colors["bg"],
+            "CARD": colors["surface"],
+            "BORDER": colors["border"],
+            "ACCENT": colors["accent"],
+            "ACCENT_HOVER": accent_hover,
+            "ACCENT_DISABLED": blend(colors["accent"], colors["panel"], 0.7),
+            "SECONDARY": secondary,
+            "SECONDARY_HOVER": blend(secondary, secondary_hover_target, 0.4),
+            "FIELD": colors["surface"],
+            "FIELD_FOCUS": blend(colors["surface"], colors["accent"], 0.18),
+            "TEXT": colors["fg"],
+            "SUBTEXT": colors["fg_muted"],
+            "RED": colors["warn"],
+            "FILL": colors["accent"],
+            "TRACK": track,
+            "GLOW": lighten(colors["accent"], 0.45),
+            "HOLE": blend(colors["warn"], colors["panel"], 0.6),
+            "HOLE_BORDER": colors["warn"],
+        }
+
+        self._palette = palette
+        for key, value in palette.items():
+            setattr(theme_constants, key, value)
+
+    def _sync_theme_attributes(self):
+        palette = getattr(self, "_palette", {})
+        for key, value in palette.items():
+            setattr(self, key, value)
+
+    def _apply_option_defaults(self):
+        self.option_add("*TButton.Cursor", "hand2")
+        self.option_add("*TRadiobutton.Cursor", "hand2")
+        self.option_add("*Entry.insertBackground", TEXT)
+        self.option_add("*Entry.selectBackground", ACCENT)
+        self.option_add("*Entry.selectForeground", "#ffffff")
+
+    def on_toggle_theme(self):
+        self.theme.toggle(("light", "dark_rouge"))
+        try:
+            self.refresh_after_theme_change()
+        except Exception:
+            pass
+
+    def refresh_after_theme_change(self):
+        self._update_theme_palette()
+        self._sync_theme_attributes()
+        self.configure(bg=BG)
+        self._init_styles()
+        self._apply_option_defaults()
+
+        for wrapper, _inner in self._cards:
+            try:
+                wrapper.configure(bg=BORDER, highlightbackground=BORDER, highlightcolor=BORDER)
+            except Exception:
+                pass
+
+        body = getattr(self, "body_frame", None)
+        if body is not None:
+            try:
+                body.refresh_theme()
+            except Exception:
+                pass
+
+        for bar in getattr(self, "bars", []):
+            try:
+                if hasattr(bar, "refresh_theme"):
+                    bar.refresh_theme()
+                else:
+                    bar.configure(bg=CARD)
+                    bar.redraw()
+            except Exception:
+                pass
+
+        for window in self.winfo_children():
+            if isinstance(window, tk.Toplevel):
+                try:
+                    window.configure(bg=BG)
+                except Exception:
+                    pass
+                for child in window.winfo_children():
+                    if isinstance(child, scrolledtext.ScrolledText):
+                        try:
+                            child.configure(bg=CARD, fg=TEXT, insertbackground=TEXT)
+                        except Exception:
+                            pass
+
+        if hasattr(self, "details") and isinstance(self.details, Collapsible):
+            try:
+                self.details.configure(style="CardInner.TFrame")
+            except Exception:
+                pass
+
+        if self.graph_window and self.graph_window.winfo_exists():
+            try:
+                self.graph_window.redraw_with_theme(self.theme)
+            except Exception:
+                pass
 
     def refresh_after_calibration(self):
         # Recalcule le scénario courant avec les overrides qui viennent d'être appliqués
@@ -312,11 +443,7 @@ class FourApp(tk.Tk):
         self._after_id = self.after(int(TICK_SECONDS * 1000), self._tick)
 
     def _init_styles(self):
-        style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
+        style = self.theme.style
 
         base_font = ("Segoe UI", 11)
 
@@ -664,6 +791,7 @@ class FourApp(tk.Tk):
 
         body = VScrollFrame(self)
         body.pack(fill="both", expand=True)
+        self.body_frame = body
 
         pcard = self._card(body.inner, fill="x", expand=False, padx=18, pady=8, padding=(24, 20))
         self.bars_heading_label = ttk.Label(
@@ -784,7 +912,7 @@ class FourApp(tk.Tk):
 
         btns = ttk.Frame(card_in, style="CardInner.TFrame")
         btns.pack(fill="x", pady=(4, 8))
-        btns.columnconfigure(6, weight=1)
+        btns.columnconfigure(7, weight=1)
         self.btn_calculer = ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton")
         self.btn_calculer.grid(row=0, column=0, padx=(0, 12), pady=2, sticky="w")
         self.btn_start = ttk.Button(
@@ -807,6 +935,7 @@ class FourApp(tk.Tk):
         ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
         ttk.Button(btns, text="Calibrer…", command=lambda: CalibrationWindow(self), style="Ghost.TButton").grid(row=0, column=5, padx=(12, 0), pady=2, sticky="e")
         ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=6, pady=2, sticky="e")
+        ttk.Button(btns, text="Thème", style=STYLE_NAMES["Button"], command=self.on_toggle_theme).grid(row=0, column=7, padx=(12, 0), pady=2, sticky="e")
 
         self.btn_feed_stop = ttk.Button(
             btns,
@@ -1164,7 +1293,11 @@ class FourApp(tk.Tk):
             except Exception:
                 pass
         try:
-            GraphWindow(self)  # ouvre la fenêtre ; elle se mettra à jour si la simu tourne
+            if self.graph_window and self.graph_window.winfo_exists():
+                self.graph_window.lift()
+                self.graph_window.redraw_with_theme(self.theme)
+            else:
+                self.graph_window = GraphWindow(self)
         except Exception as e:
             self._show_error(f"Impossible d'ouvrir le graphique : {e}")
 
