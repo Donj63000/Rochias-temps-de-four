@@ -124,9 +124,16 @@ class GraphWindow(tk.Toplevel):
         self.configure(bg=bg_color)
         self._after = None
 
+        try:
+            self.mode = app.calc_mode.get()
+        except Exception:
+            self.mode = "operator"
+
         # -- panneau haut (infos)
         top = ttk.Frame(self); top.pack(fill="x", padx=10, pady=6)
         ttk.Label(top, text="Épaisseur de couche (cm) vs Temps (min) — partitionné par tapis").pack(side="left")
+        self.mode_indicator = ttk.Label(top, text="")
+        self.mode_indicator.pack(side="left", padx=(12, 0))
         self.info = ttk.Label(top, text="")
         self.info.pack(side="right")
 
@@ -156,6 +163,12 @@ class GraphWindow(tk.Toplevel):
     def _plot_static(self):
         # Récupère les données calculées (on ne touche à aucun calcul existant)
         data = _compute_last_or_recalc(self.app)
+        mode = getattr(self, "mode", "operator") or "operator"
+        if hasattr(self, "mode_indicator"):
+            if mode == "maintenance":
+                self.mode_indicator.config(text="Référence maintenance (L/v)")
+            else:
+                self.mode_indicator.config(text="")
         h1, h2, h3 = _heights_cm(data.f1, data.f2, data.f3, data.h0_cm)
 
         # Durées par tapis (minutes) + total
@@ -238,6 +251,11 @@ class GraphWindow(tk.Toplevel):
             theme.apply_matplotlib(self.fig)
         except Exception:
             pass
+        self._plot_static()
+        self.canvas.draw_idle()
+
+    def redraw_with_mode(self, mode: str):
+        self.mode = mode or "operator"
         self._plot_static()
         self.canvas.draw_idle()
 

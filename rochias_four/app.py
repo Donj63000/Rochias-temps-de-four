@@ -51,6 +51,7 @@ from .theme_manager import ThemeManager, STYLE_NAMES
 from .utils import fmt_hms, fmt_minutes, parse_hz
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
 from .graphs import GraphWindow
+from .maintenance_ref import compute_times_maintenance
 from .calibration_window import CalibrationWindow
 from .speed_overrides import load_speed_from_disk
 
@@ -113,6 +114,7 @@ class FourApp(tk.Tk):
         self.graph_window = None
         self.operator_mode = True
         self.parts_mode = tk.StringVar(value="repartition")
+        self.calc_mode = tk.StringVar(value="operator")
 
         self.logo_img = None
         self._error_after = None
@@ -912,7 +914,7 @@ class FourApp(tk.Tk):
 
         btns = ttk.Frame(card_in, style="CardInner.TFrame")
         btns.pack(fill="x", pady=(4, 8))
-        btns.columnconfigure(7, weight=1)
+        btns.columnconfigure(8, weight=1)
         self.btn_calculer = ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton")
         self.btn_calculer.grid(row=0, column=0, padx=(0, 12), pady=2, sticky="w")
         self.btn_start = ttk.Button(
@@ -931,11 +933,20 @@ class FourApp(tk.Tk):
             style="Ghost.TButton",
         )
         self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2, sticky="w")
-        ttk.Button(btns, text="↺ Réinitialiser", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2, sticky="w")
-        ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
-        ttk.Button(btns, text="Calibrer…", command=lambda: CalibrationWindow(self), style="Ghost.TButton").grid(row=0, column=5, padx=(12, 0), pady=2, sticky="e")
-        ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=6, pady=2, sticky="e")
-        ttk.Button(btns, text="Thème", style=STYLE_NAMES["Button"], command=self.on_toggle_theme).grid(row=0, column=7, padx=(12, 0), pady=2, sticky="e")
+        self.chk_maint = ttk.Checkbutton(
+            btns,
+            text="Référence maintenance (L/v)",
+            command=self.on_calculer,
+            variable=self.calc_mode,
+            onvalue="maintenance",
+            offvalue="operator",
+        )
+        self.chk_maint.grid(row=0, column=3, padx=(0, 12), pady=2, sticky="w")
+        ttk.Button(btns, text="↺ Réinitialiser", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="w")
+        ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=5, pady=2, sticky="e")
+        ttk.Button(btns, text="Calibrer…", command=lambda: CalibrationWindow(self), style="Ghost.TButton").grid(row=0, column=6, padx=(12, 0), pady=2, sticky="e")
+        ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=7, pady=2, sticky="e")
+        ttk.Button(btns, text="Thème", style=STYLE_NAMES["Button"], command=self.on_toggle_theme).grid(row=0, column=8, padx=(12, 0), pady=2, sticky="e")
 
         self.btn_feed_stop = ttk.Button(
             btns,
@@ -1145,9 +1156,11 @@ class FourApp(tk.Tk):
             mode = self.parts_mode.get()
         legend = "répartition" if mode != "independant" else "indépendant"
         if hasattr(self, "bars_heading_label"):
-            self.bars_heading_label.config(
-                text=f"Barres de chargement — Durée tapis ({legend})"
-            )
+            if getattr(self, "calc_mode", None) is not None and self.calc_mode.get() == "maintenance":
+                heading = "Barres de chargement — Référence maintenance (L/v)"
+            else:
+                heading = f"Barres de chargement — Durée tapis ({legend})"
+            self.bars_heading_label.config(text=heading)
         targets = None
         if mode == "independant":
             targets = self.last_calc.get("parts_indep")
@@ -1202,7 +1215,10 @@ class FourApp(tk.Tk):
             self._show_correction_row(corr or 0.0, sum_indep)
         else:
             parts = data.get("parts_reparties")
-            heading = "Répartition du total (somme = T)"
+            if getattr(self, "calc_mode", None) is not None and self.calc_mode.get() == "maintenance":
+                heading = "Référence maintenance (L/v)"
+            else:
+                heading = "Répartition du total (somme = T)"
             if parts is None:
                 parts = parts_reparties(total, *f_values)
             self._hide_correction_row()
@@ -1315,7 +1331,15 @@ class FourApp(tk.Tk):
             self._cancel_after()
         self._clear_error()
         try:
-            f1 = parse_hz(self.e1.get()); f2 = parse_hz(self.e2.get()); f3 = parse_hz(self.e3.get())
+            raw1 = self.e1.get()
+            raw2 = self.e2.get()
+            raw3 = self.e3.get()
+            f1_in = float((raw1 or "").strip().replace(",", "."))
+            f2_in = float((raw2 or "").strip().replace(",", "."))
+            f3_in = float((raw3 or "").strip().replace(",", "."))
+            f1 = parse_hz(raw1)
+            f2 = parse_hz(raw2)
+            f3 = parse_hz(raw3)
             if f1 <= 0 or f2 <= 0 or f3 <= 0:
                 raise ValueError("Les fréquences doivent être > 0.")
         except Exception as e:
@@ -1351,15 +1375,52 @@ class FourApp(tk.Tk):
         alpha_ratio = calc.alpha_anchor
         scale_ls = calc.beta_ls
 
+        calc_mode = self.calc_mode.get()
+        display_parts = parts_split
+        display_total_min = T_total
+        freq_display = (f1, f2, f3)
+        maintenance_result = None
+        if calc_mode == "maintenance":
+            try:
+                maintenance_result = compute_times_maintenance(f1_in, f2_in, f3_in, units="auto")
+            except Exception as exc:
+                self._show_error(f"Mode maintenance indisponible : {exc}")
+                calc_mode = "operator"
+                self.calc_mode.set("operator")
+                maintenance_result = None
+                display_parts = parts_split
+                display_total_min = T_total
+                freq_display = (f1, f2, f3)
+            else:
+                display_parts = (
+                    maintenance_result.t1_min,
+                    maintenance_result.t2_min,
+                    maintenance_result.t3_min,
+                )
+                display_total_min = maintenance_result.total_min
+                freq_display = (
+                    maintenance_result.f1_hz,
+                    maintenance_result.f2_hz,
+                    maintenance_result.f3_hz,
+                )
+        display_parts = tuple(display_parts)
+
         self.seg_distances = [stage.distance_target for stage in calc.stages]
         self.seg_speeds = [stage.frequency_hz for stage in calc.stages]
-        self.seg_durations = [value * 60.0 for value in parts_split]
+        if freq_display:
+            self.seg_speeds = [float(val) for val in freq_display]
+        self.seg_durations = [value * 60.0 for value in display_parts]
 
-        for row, freq in zip(self.stage_rows, (f1, f2, f3)):
+        for row, freq in zip(self.stage_rows, freq_display):
             row["freq"].config(text=f"{freq:.2f} Hz")
 
+        total_label = (
+            "Référence maintenance (L/v)"
+            if calc_mode == "maintenance"
+            else "Temps total (modèle synergie)"
+        )
         self.lbl_total_big.config(
-            text=f"Temps total (modèle synergie) : {fmt_minutes(T_total)} | {fmt_hms(T_total * 60)}"
+            text=f"{total_label} : {fmt_minutes(display_total_min)} | {fmt_hms(display_total_min * 60)}"
         )
 
         self.alpha = 1.0
@@ -1418,9 +1479,20 @@ class FourApp(tk.Tk):
             f"Δ total − Σ ancrage : {delta_parts:+.2f} min\n"
             f"K1'={anch.K1:.1f}  K2'={anch.K2:.1f}  K3'={anch.K3:.1f}"
         )
+        if calc_mode == "maintenance":
+            info += "\nMode maintenance L/v : t_i = Lconv_i * C_i / UI_i (référence tableur)."
+            if maintenance_result is not None:
+                info += (
+                    f"\nUI maintenance : {maintenance_result.ui1:.0f} / {maintenance_result.ui2:.0f} / {maintenance_result.ui3:.0f}"
+                    f" | t₁={maintenance_result.t1_hms}, t₂={maintenance_result.t2_hms}, t₃={maintenance_result.t3_hms}"
+                )
         self.lbl_analysis_info.config(text=info)
 
-        self._update_kpi("total", fmt_minutes(T_total), f"{T_total:.2f} min | {fmt_hms(T_total * 60)}")
+        self._update_kpi(
+            "total",
+            fmt_minutes(display_total_min),
+            f"{display_total_min:.2f} min | {fmt_hms(display_total_min * 60)}",
+        )
 
         self._update_stat_card("ls", f"{T_LS:.2f} min", fmt_hms(T_LS * 60))
         sum_ls = t1_ls + t2_ls + t3_ls
@@ -1439,14 +1511,14 @@ class FourApp(tk.Tk):
         self._set_stage_status(2, "idle")
 
         self.last_calc = dict(
-            f1=f1, f2=f2, f3=f3,
+            f1=freq_display[0], f2=freq_display[1], f3=freq_display[2],
             d=d, K1=K1, K2=K2, K3=K3,
             t1=t1_ls, t2=t2_ls, t3=t3_ls,
             t1_base=t1_indep, t2_base=t2_indep, t3_base=t3_indep,
             t1_star=t1_indep, t2_star=t2_indep, t3_star=t3_indep,
             T_LS=T_LS, T_exp=T_total, T_total=T_total, T_model_calc=T_model_calc,
-            T_total_min=T_total,
-            t1s_min=t1_rep, t2s_min=t2_rep, t3s_min=t3_rep,
+            T_total_min=display_total_min,
+            t1s_min=display_parts[0], t2s_min=display_parts[1], t3s_min=display_parts[2],
             alpha=alpha_ratio, beta=scale_ls,
             sum_t=t1_ls + t2_ls + t3_ls, sum_base=sum_base, delta=delta_total,
             delta_parts=delta_parts,
@@ -1454,13 +1526,21 @@ class FourApp(tk.Tk):
             anchor_model_total=anchor_model_total,
             anchor_model_split=anchor_model_split,
             ols_split=ols_split,
-            parts_reparties=parts_split,
+            parts_reparties=display_parts,
+            parts_reparties_model=parts_split,
             parts_indep=anchor_terms,
             correction=correction,
             sum_indep=sum_base,
+            calc_mode=calc_mode,
         )
 
         self._apply_parts_mode()
+
+        try:
+            if hasattr(self, "graph_window") and self.graph_window and self.graph_window.winfo_exists():
+                self.graph_window.redraw_with_mode(calc_mode)
+        except Exception:
+            pass
 
         self.total_duration = sum(self.seg_durations)
         self.notified_stage1 = False
