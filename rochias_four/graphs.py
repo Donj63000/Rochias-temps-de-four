@@ -44,7 +44,8 @@ def _piecewise_by_cells(t0: float, L: float, h_in: float, h_out: float, profile)
 
     return [x0, x1, x2, x3], [y0, y1, y2, y3]
 
-from .calibration import K1_DIST, K2_DIST, K3_DIST, compute_times
+from .calibration import K1_DIST, K2_DIST, K3_DIST
+from .calc_models import parts_reparties, total_minutes_synergy
 from .utils import parse_hz, fmt_hms
 from .config import TICK_SECONDS
 
@@ -67,21 +68,17 @@ def _compute_last_or_recalc(app) -> GraphInputs:
     Retourne fréquences, h0, durées par tapis (t*_i) et T_modèle.
     """
     # 1) lire f1,f2,f3 depuis last_calc si possible, sinon depuis les champs UI
-    if getattr(app, "last_calc", None):
-        f1 = float(app.last_calc["f1"]); f2 = float(app.last_calc["f2"]); f3 = float(app.last_calc["f3"])
-        T_total = float(app.last_calc["T_exp"])
-        t1s = float(app.last_calc["t1_star"]); t2s = float(app.last_calc["t2_star"]); t3s = float(app.last_calc["t3_star"])
+    calc = getattr(app, "last_calc", None)
+    if calc:
+        f1 = float(calc["f1"]); f2 = float(calc["f2"]); f3 = float(calc["f3"])
+        T_total = float(calc.get("T_total_min", calc.get("T_exp", 0.0)))
+        t1s = float(calc.get("t1s_min", calc.get("t1_star", 0.0)))
+        t2s = float(calc.get("t2s_min", calc.get("t2_star", 0.0)))
+        t3s = float(calc.get("t3s_min", calc.get("t3_star", 0.0)))
     else:
         f1 = parse_hz(app.e1.get()); f2 = parse_hz(app.e2.get()); f3 = parse_hz(app.e3.get())
-        # Recalcul minimal (même logique que app.on_calculer)
-        t1, t2, t3, T_total, (_d, _K1, _K2, _K3) = compute_times(f1, f2, f3)
-        sum_ls = t1 + t2 + t3
-        if sum_ls <= 1e-12:
-            raise ValueError("Somme des durées LS nulle.")
-        scale_ls = T_total / sum_ls
-        if not (math.isfinite(scale_ls) and scale_ls > 0):
-            scale_ls = 1.0
-        t1s, t2s, t3s = scale_ls * t1, scale_ls * t2, scale_ls * t3
+        T_total = total_minutes_synergy(f1, f2, f3)
+        t1s, t2s, t3s = parts_reparties(T_total, f1, f2, f3)
 
     # 2) lire h0 si l'appli a un champ self.h0 ; sinon défaut 2.00 cm
     h0_cm = 2.0
