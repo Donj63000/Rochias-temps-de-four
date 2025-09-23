@@ -9,15 +9,13 @@ from .calibration import (
     DEFAULT_ANCHOR,
     DEFAULT_OLS,
     DEFAULT_SYNERGY,
-    K1_DIST,
-    K2_DIST,
-    K3_DIST,
     compute_times,
     is_monotone_decreasing_in_each_f,
     split_contributions,
     total_time_minutes,
     total_time_minutes_safe,
 )
+from .calibration_overrides import get_current_anchor
 
 
 @dataclass(frozen=True)
@@ -54,10 +52,11 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
 
     t1_ls, t2_ls, t3_ls, total_ls, params = compute_times(f1, f2, f3)
 
+    anch = get_current_anchor()
     anchor_terms = (
-        K1_DIST / f1,
-        K2_DIST / f2,
-        K3_DIST / f3,
+        anch.K1 / f1,
+        anch.K2 / f2,
+        anch.K3 / f3,
     )
     sum_anchor_terms = sum(anchor_terms)
 
@@ -84,7 +83,7 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
         for freq, duration, distance in zip(
             (f1, f2, f3),
             anchor_durations,
-            (K1_DIST, K2_DIST, K3_DIST),
+            (anch.K1, anch.K2, anch.K3),
         )
     )
 
@@ -119,7 +118,8 @@ def compute_simulation_plan(f1: float, f2: float, f3: float) -> CalculationResul
 def thickness_and_accum(f1: float, f2: float, f3: float, h0_cm: float) -> Dict[str, float]:
     """Return thickness variations between conveyors."""
 
-    u1, u2, u3 = (f1 / K1_DIST), (f2 / K2_DIST), (f3 / K3_DIST)
+    anch = get_current_anchor()
+    u1, u2, u3 = (f1 / anch.K1), (f2 / anch.K2), (f3 / anch.K3)
 
     h1 = h0_cm
     h2 = h0_cm * (u1 / u2) if u2 > 0 else float("inf")
