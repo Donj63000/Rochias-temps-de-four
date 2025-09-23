@@ -8,6 +8,12 @@ from .calibration_overrides import (
     load_anchor_from_disk, save_anchor_to_disk,
     fit_anchor_from_direct, fit_anchor_from_points, AnchorParams,
 )
+from .speed_overrides import (
+    load_speed_from_disk, save_speed_to_disk, reset_speed_to_default,
+    get_current_speedset, set_current_speedset,
+    fit_line_through_origin, fit_line_with_intercept, estimate_speed_mps,
+    SpeedParams, SpeedSet
+)
 
 class CalibrationWindow(tk.Toplevel):
     """
@@ -24,14 +30,18 @@ class CalibrationWindow(tk.Toplevel):
         self.grab_set()
 
         nb = ttk.Notebook(self)
+        self.nb = nb
         self.tab_simple = ttk.Frame(nb)
         self.tab_points = ttk.Frame(nb)
+        self.tab_speed = ttk.Frame(nb)
         nb.add(self.tab_simple, text="Ancrage simple")
         nb.add(self.tab_points, text="Par mesures (points)")
+        nb.add(self.tab_speed, text="Vitesses (m/s)")
         nb.pack(fill="both", expand=True, padx=8, pady=8)
 
         self._build_tab_simple()
         self._build_tab_points()
+        self._build_tab_speed()
 
         # Boutons bas
         frm_btn = ttk.Frame(self)
@@ -47,6 +57,136 @@ class CalibrationWindow(tk.Toplevel):
 
         # charge d'éventuels paramètres déjà sauvegardés
         load_anchor_from_disk()
+        load_speed_from_disk()
+
+    def _build_tab_speed(self):
+        f = self.tab_speed
+        # Checkbox modèle
+        self.cb_force_through_origin = tk.BooleanVar(value=True)
+        ttk.Checkbutton(f, text="Forcer b=0 (v = a·f)", variable=self.cb_force_through_origin).grid(
+            row=0, column=0, columnspan=6, sticky="w", pady=(6,4))
+
+        # 3 tableaux: T1, T2, T3
+        self._speed_tables = []
+        for i, name in enumerate(("Tapis 1", "Tapis 2", "Tapis 3")):
+            row = 1 + i*4
+            ttk.Label(f, text=name, font=("TkDefaultFont", 10, "bold")).grid(row=row, column=0, sticky="w", pady=(8,2))
+            cols = ("Hz", "t_1m (s)", "v (m/s)")
+            tv = ttk.Treeview(f, columns=cols, show="headings", height=4)
+            for c in cols:
+                tv.heading(c, text=c); tv.column(c, width=90, anchor="center")
+            tv.grid(row=row+1, column=0, columnspan=6, sticky="nsew")
+
+            # Inputs
+            ttk.Label(f, text="Hz").grid(row=row+2, column=0, sticky="e")
+            e_f = ttk.Entry(f, width=8); e_f.grid(row=row+2, column=1, sticky="w")
+            ttk.Label(f, text="t_1m (s)").grid(row=row+2, column=2, sticky="e")
+            e_t = ttk.Entry(f, width=8); e_t.grid(row=row+2, column=3, sticky="w")
+            ttk.Label(f, text="ou v (m/s)").grid(row=row+2, column=4, sticky="e")
+            e_v = ttk.Entry(f, width=8); e_v.grid(row=row+2, column=5, sticky="w")
+
+            def add_point(tv=tv, e_f=e_f, e_t=e_t, e_v=e_v):
+                hf = e_f.get().strip(); ht = e_t.get().strip(); hv = e_v.get().strip()
+                if not hf:
+                    return
+                tv.insert("", "end", values=(hf, ht, hv))
+                e_f.delete(0,"end"); e_t.delete(0,"end"); e_v.delete(0,"end")
+
+            ttk.Button(f, text="Ajouter", command=add_point).grid(row=row+3, column=1, sticky="w")
+            ttk.Button(f, text="Supprimer", command=lambda tv=tv: [tv.delete(i) for i in tv.selection()]).grid(row=row+3, column=2, sticky="w")
+            # Label de preview
+            lbl = ttk.Label(f, text="Prévisualisation: --")
+            lbl.grid(row=row+3, column=3, columnspan=3, sticky="w")
+            self._speed_tables.append((tv, lbl))
+
+        # Boutons bas (spécifiques vitesses)
+        frm = ttk.Frame(f); frm.grid(row=20, column=0, columnspan=6, sticky="ew", pady=(8,6))
+        ttk.Button(frm, text="Aperçu vitesses", command=self._on_speed_preview).pack(side="left")
+        ttk.Button(frm, text="Appliquer vitesses", command=self._on_speed_apply).pack(side="left", padx=6)
+        ttk.Button(frm, text="Sauver vitesses", command=self._on_speed_save).pack(side="left")
+        ttk.Button(frm, text="Réinitialiser vitesses", command=self._on_speed_reset).pack(side="left", padx=6)
+
+    def _collect_speed_points(self, tv) -> list[tuple[float,float]]:
+        """Lit un Treeview -> liste de (f, v) en m/s."""
+        pts = []
+        for it in tv.get_children():
+            f_str, t_str, v_str = tv.item(it, "values")
+            f = float(f_str)
+            t = float(t_str) if t_str not in ("", None) else None
+            v = float(v_str) if v_str not in ("", None) else None
+            # conversion -> (f, v)
+            if v is None:
+                if t is None:
+                    continue
+                if t <= 0:
+                    continue
+                v = 1.0 / t
+            pts.append((f, v))
+        return pts
+
+    def _fit_for_table(self, tv, force_b_zero: bool) -> SpeedParams | None:
+        pts = self._collect_speed_points(tv)
+        if len(pts) == 0:
+            return None
+        if force_b_zero:
+            return fit_line_through_origin(pts)
+        else:
+            return fit_line_with_intercept(pts)
+
+    def _on_speed_preview(self):
+        force0 = self.cb_force_through_origin.get()
+        previews: list[SpeedParams | None] = []
+        for tv, lbl in self._speed_tables:
+            p = self._fit_for_table(tv, force0)
+            previews.append(p)
+            if p is None:
+                lbl.config(text="Prévisualisation: --")
+            else:
+                v50 = estimate_speed_mps(p, 50.0)
+                v80 = estimate_speed_mps(p, 80.0)
+                lbl.config(text=f"Prévisualisation: v = {p.a:.5f}·f {'+' if p.b>=0 else '-'} {abs(p.b):.5f}  → v(50)={v50:.3f} m/s, v(80)={v80:.3f} m/s")
+
+        # Si 0 point sur un tapis, on affiche “--” et on n'écrase rien
+
+    def _on_speed_apply(self):
+        force0 = self.cb_force_through_origin.get()
+        params = []
+        for tv, _ in self._speed_tables:
+            p = self._fit_for_table(tv, force0)
+            if p is None:
+                # pas de points => on garde l'existant si il existe
+                cur = get_current_speedset()
+                if cur is None:
+                    # rien d'existant -> neutre (n'influencera rien si non utilisé)
+                    p = SpeedParams(a=0.0, b=0.0)
+                else:
+                    # conserve la valeur déjà en mémoire
+                    # (on reconstruira SpeedSet plus bas)
+                    params.append(None)
+                    continue
+            params.append(p)
+
+        cur = get_current_speedset()
+        t1 = params[0] if params[0] is not None else (cur.t1 if cur else SpeedParams(0.0,0.0))
+        t2 = params[1] if params[1] is not None else (cur.t2 if cur else SpeedParams(0.0,0.0))
+        t3 = params[2] if params[2] is not None else (cur.t3 if cur else SpeedParams(0.0,0.0))
+        set_current_speedset(SpeedSet(t1=t1, t2=t2, t3=t3))
+        self.lbl_info.config(text="Vitesses appliquées (session). Total/répartition inchangés.")
+        if hasattr(self.master, "refresh_after_calibration"):
+            self.master.refresh_after_calibration()
+
+    def _on_speed_save(self):
+        if get_current_speedset() is None:
+            self.lbl_info.config(text="Aucune vitesse à sauver (applique d'abord).")
+            return
+        save_speed_to_disk()
+        self.lbl_info.config(text="Vitesses sauvegardées (persistant).")
+
+    def _on_speed_reset(self):
+        reset_speed_to_default()
+        self.lbl_info.config(text="Vitesses réinitialisées.")
+        if hasattr(self.master, "refresh_after_calibration"):
+            self.master.refresh_after_calibration()
 
     # ---------- Onglet 1 : ancrage simple ----------
     def _build_tab_simple(self):
@@ -128,9 +268,13 @@ class CalibrationWindow(tk.Toplevel):
     def _on_preview(self):
         try:
             # Onglet courant
-            idx = self.nametowidget(self.children["!notebook"]).index("current")
+            idx = self.nb.index("current")
         except Exception:
             idx = 0
+
+        if idx == 2:
+            self._on_speed_preview()
+            return
 
         if idx == 0:
             # Simple
