@@ -120,7 +120,8 @@ class GraphWindow(tk.Toplevel):
         self.app = app
         self.title("Graphiques — Épaisseur vs Temps (h(t))")
         self.geometry("980x560")
-        self.configure(bg=getattr(app, "BG", "#ffffff"))  # tolérant si thème non exporté
+        bg_color = getattr(app.theme, "colors", {}).get("bg", getattr(app, "BG", "#ffffff"))
+        self.configure(bg=bg_color)
         self._after = None
 
         # -- panneau haut (infos)
@@ -131,7 +132,13 @@ class GraphWindow(tk.Toplevel):
 
         # -- figure matplotlib
         fig = Figure(figsize=(8.8, 4.8), dpi=100)
+        self.fig = fig
         self.ax = fig.add_subplot(111)
+        if hasattr(self.app, "theme"):
+            try:
+                self.app.theme.apply_matplotlib(fig)
+            except Exception:
+                pass
         self.canvas = FigureCanvasTkAgg(fig, master=self)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=(0, 4))
@@ -158,6 +165,11 @@ class GraphWindow(tk.Toplevel):
         T  = data.T_total_min
 
         self.ax.clear()
+        if hasattr(self.app, "theme"):
+            try:
+                self.app.theme.apply_matplotlib(self.ax)
+            except Exception:
+                pass
 
         # --- Fond : zones par tapis + traits 1/3 et 2/3 (repères de cellules) ---
         starts = [0.0, t1, t1 + t2]
@@ -217,6 +229,18 @@ class GraphWindow(tk.Toplevel):
         ))
         self.canvas.draw()
 
+    def redraw_with_theme(self, theme):
+        try:
+            self.configure(bg=theme.colors.get("bg", "#111111"))
+        except Exception:
+            pass
+        try:
+            theme.apply_matplotlib(self.fig)
+        except Exception:
+            pass
+        self._plot_static()
+        self.canvas.draw_idle()
+
     def _now_sim_minutes(self) -> float:
         """
         Temps global de la simulation (min), fidèle à l’app : somme des durées déjà passées
@@ -264,4 +288,9 @@ class GraphWindow(tk.Toplevel):
             except Exception:
                 pass
             self._after = None
+        try:
+            if hasattr(self.app, "graph_window") and self.app.graph_window is self:
+                self.app.graph_window = None
+        except Exception:
+            pass
         self.destroy()

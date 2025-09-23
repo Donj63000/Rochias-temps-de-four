@@ -30,6 +30,13 @@ class VScrollFrame(ttk.Frame):
         self.canvas.bind_all("<Button-4>", self._on_mousewheel, add="+")
         self.canvas.bind_all("<Button-5>", self._on_mousewheel, add="+")
 
+    def refresh_theme(self):
+        self.canvas.configure(bg=BG)
+        try:
+            self.inner.configure(style="TFrame")
+        except Exception:
+            pass
+
     def _on_frame_configure(self, _event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
@@ -211,6 +218,10 @@ class SegmentedBar(tk.Canvas):
                     fill=SUBTEXT,
                     font=("Segoe UI Semibold", 9),
                 )
+
+    def refresh_theme(self):
+        self.configure(bg=CARD)
+        self.redraw()
 
 
 class Tooltip:
