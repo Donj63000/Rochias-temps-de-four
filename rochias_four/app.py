@@ -79,6 +79,7 @@ class FourApp(tk.Tk):
         self.feed_events: list[GapEvent] = []
         self.feed_on = True
         self.accum_badges: list[ttk.Label | None] = []
+        self.bars_heading_label: ttk.Label | None = None
 
         self._init_styles()
         self.option_add("*TButton.Cursor", "hand2")
@@ -657,11 +658,12 @@ class FourApp(tk.Tk):
         body.pack(fill="both", expand=True)
 
         pcard = self._card(body.inner, fill="x", expand=False, padx=18, pady=8, padding=(24, 20))
-        ttk.Label(
+        self.bars_heading_label = ttk.Label(
             pcard,
-            text="Barres de chargement (temps réel, 3 cellules)",
+            text="Barres de chargement — Durée tapis (répartition)",
             style="CardHeading.TLabel",
-        ).pack(anchor="w", pady=(0, 12))
+        )
+        self.bars_heading_label.pack(anchor="w", pady=(0, 12))
 
         self.bars = []
         self.bar_texts = []
@@ -998,6 +1000,47 @@ class FourApp(tk.Tk):
             return
         self._apply_parts_mode()
 
+    def _update_bar_targets(self, mode: str | None = None):
+        if not self.last_calc:
+            return
+        if mode is None:
+            mode = self.parts_mode.get()
+        legend = "répartition" if mode != "independant" else "indépendant"
+        if hasattr(self, "bars_heading_label"):
+            self.bars_heading_label.config(
+                text=f"Barres de chargement — Durée tapis ({legend})"
+            )
+        targets = None
+        if mode == "independant":
+            targets = self.last_calc.get("parts_indep")
+        else:
+            targets = self.last_calc.get("parts_reparties")
+        if not targets:
+            return
+        seconds = [max(0.0, float(value) * 60.0) for value in targets]
+        if self.animating:
+            return
+        self.seg_durations = seconds
+        self.total_duration = sum(seconds)
+        if not self.bars:
+            return
+        for idx in range(min(len(self.bars), len(seconds))):
+            bar = self.bars[idx]
+            txt = self.bar_texts[idx]
+            freq_raw = self.seg_speeds[idx] if idx < len(self.seg_speeds) else 0.0
+            try:
+                freq = float(freq_raw)
+            except (TypeError, ValueError):
+                freq = 0.0
+            target_sec = seconds[idx]
+            bar.set_total_distance(target_sec)
+            bar.set_progress(0.0)
+            txt.config(
+                text=(
+                    f"0.0% | vitesse {freq:.2f} Hz | 00:00:00 / {fmt_hms(target_sec)} | en attente"
+                )
+            )
+
     def _apply_parts_mode(self):
         data = self.last_calc
         if not data:
@@ -1051,6 +1094,7 @@ class FourApp(tk.Tk):
             f"{parts[2]:.2f} min | {fmt_hms(parts[2] * 60)}",
         )
         data["parts_mode"] = mode
+        self._update_bar_targets(mode)
 
     # ---------- Actions ----------
     def on_reset(self):
@@ -1086,6 +1130,8 @@ class FourApp(tk.Tk):
             self.parts_section_label.config(text="Répartition du total (somme = T)")
         self._hide_correction_row()
         self.lbl_analysis_info.config(text="")
+        if self.bars_heading_label is not None:
+            self.bars_heading_label.config(text="Barres de chargement — Durée tapis (répartition)")
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="disabled", text="⏸ Pause")
         self.btn_calculer.config(state="normal")
@@ -1136,6 +1182,7 @@ class FourApp(tk.Tk):
         T_total = total_minutes_synergy(f1, f2, f3)
         T_exp = T_total
         anchor_terms = tuple(parts_independantes(f1, f2, f3))
+        t1_indep, t2_indep, t3_indep = anchor_terms
         anchor_model_total = extras.get("anchor_total_model", float("nan"))
         if not math.isfinite(anchor_model_total):
             anchor_model_total = total_minutes_anchor(f1, f2, f3)
@@ -1147,16 +1194,16 @@ class FourApp(tk.Tk):
             return
 
         parts_split = tuple(parts_reparties(T_total, f1, f2, f3))
+        t1_rep, t2_rep, t3_rep = parts_split
         correction = correction_recouvrement(T_total, f1, f2, f3)
-        t1s, t2s, t3s = anchor_terms
-        sum_base = t1s + t2s + t3s
+        sum_base = sum(anchor_terms)
         sum_ls = t1_ls + t2_ls + t3_ls
         alpha_ratio = calc.alpha_anchor
         scale_ls = calc.beta_ls
 
         self.seg_distances = [stage.distance_target for stage in calc.stages]
         self.seg_speeds = [stage.frequency_hz for stage in calc.stages]
-        self.seg_durations = [stage.duration_min * 60.0 for stage in calc.stages]
+        self.seg_durations = [value * 60.0 for value in parts_split]
 
         for row, freq in zip(self.stage_rows, (f1, f2, f3)):
             row["freq"].config(text=f"{freq:.2f} Hz")
@@ -1202,14 +1249,8 @@ class FourApp(tk.Tk):
             except Exception:
                 pass
 
-        for i, (distance_eq, fi, duration) in enumerate(
-            zip(self.seg_distances, self.seg_speeds, self.seg_durations)
-        ):
-            distance = max(1e-9, float(distance_eq))
-            self.bars[i].set_total_distance(distance)
-            self.bar_texts[i].config(
-                text=f"0.0% | vitesse {fi:.2f} Hz | 00:00:00 / {fmt_hms(duration)} | en attente"
-            )
+        for txt in self.bar_texts:
+            txt.config(text="En attente")
 
         delta_total = T_total - T_LS
         delta_parts = T_total - sum_base
@@ -1251,9 +1292,11 @@ class FourApp(tk.Tk):
             f1=f1, f2=f2, f3=f3,
             d=d, K1=K1, K2=K2, K3=K3,
             t1=t1_ls, t2=t2_ls, t3=t3_ls,
-            t1_base=anchor_terms[0], t2_base=anchor_terms[1], t3_base=anchor_terms[2],
-            t1_star=t1s, t2_star=t2s, t3_star=t3s,
+            t1_base=t1_indep, t2_base=t2_indep, t3_base=t3_indep,
+            t1_star=t1_indep, t2_star=t2_indep, t3_star=t3_indep,
             T_LS=T_LS, T_exp=T_total, T_total=T_total, T_model_calc=T_model_calc,
+            T_total_min=T_total,
+            t1s_min=t1_rep, t2s_min=t2_rep, t3s_min=t3_rep,
             alpha=alpha_ratio, beta=scale_ls,
             sum_t=t1_ls + t2_ls + t3_ls, sum_base=sum_base, delta=delta_total,
             delta_parts=delta_parts,
@@ -1370,7 +1413,6 @@ class FourApp(tk.Tk):
 
         i = self.seg_idx
         dur = max(1e-6, self.seg_durations[i])
-        distance_totale = max(1e-9, self.seg_distances[i])
         vitesse = self.seg_speeds[i]
         now = time.perf_counter()
         elapsed = now - self.seg_start
@@ -1380,15 +1422,9 @@ class FourApp(tk.Tk):
         if (not self.notified_exit and self.total_duration > 5 * 60 and total_remaining <= 5 * 60):
             self.notified_exit = True
             self.toast("Le produit va sortir du four (≤ 5 min)")
-        distance_parcourue = max(0.0, vitesse * (elapsed / 60.0))
-        if distance_parcourue >= distance_totale:
-            distance_parcourue = distance_totale
-            prog = 1.0
-        else:
-            prog = distance_parcourue / distance_totale
-
-        if prog >= 1.0:
-            self.bars[i].set_progress(distance_totale)
+        if elapsed >= dur:
+            elapsed = dur
+            self.bars[i].set_progress(dur)
             self.bar_texts[i].config(
                 text=f"100% | vitesse {vitesse:.2f} Hz | {fmt_hms(dur)} / {fmt_hms(dur)} | terminé"
             )
@@ -1413,8 +1449,7 @@ class FourApp(tk.Tk):
             j = self.seg_idx
             vitesse_j = self.seg_speeds[j]
             duree_j = self.seg_durations[j]
-            distance_j = max(1e-9, self.seg_distances[j])
-            self.bars[j].set_total_distance(distance_j)
+            self.bars[j].set_total_distance(duree_j)
             self.bar_texts[j].config(
                 text=f"0.0% | vitesse {vitesse_j:.2f} Hz | 00:00:00 / {fmt_hms(duree_j)} | en cours"
             )
@@ -1424,8 +1459,8 @@ class FourApp(tk.Tk):
             self._schedule_tick()
             return
 
-        pct = max(0.0, min(1.0, prog)) * 100.0
-        self.bars[i].set_progress(distance_parcourue)
+        pct = max(0.0, min(1.0, elapsed / dur)) * 100.0
+        self.bars[i].set_progress(elapsed)
         self.bar_texts[i].config(
             text=f"{pct:5.1f}% | vitesse {vitesse:.2f} Hz | {fmt_hms(elapsed)} / {fmt_hms(dur)} | en cours"
         )
@@ -1452,7 +1487,15 @@ class FourApp(tk.Tk):
             )
             for belt_idx, intervals in enumerate(holes):
                 try:
-                    self.bars[belt_idx].set_holes(intervals)
+                    freq = self.seg_speeds[belt_idx] if belt_idx < len(self.seg_speeds) else 0.0
+                    if freq and math.isfinite(freq):
+                        converted = [
+                            (start / freq * 60.0, end / freq * 60.0)
+                            for start, end in intervals
+                        ]
+                    else:
+                        converted = []
+                    self.bars[belt_idx].set_holes(converted)
                 except Exception:
                     pass
         except Exception:
@@ -1524,18 +1567,20 @@ class FourApp(tk.Tk):
                     K2_DIST / f2,
                     K3_DIST / f3,
                 )
+                t1_indep, t2_indep, t3_indep = anchor_terms
                 sum_base = sum(anchor_terms)
                 alpha = plan.alpha_anchor
                 sum_ls = t1 + t2 + t3
                 beta = plan.beta_ls
-                t1s, t2s, t3s = anchor_terms
+                parts_split = parts_reparties(T_exp, f1, f2, f3)
+                t1_rep, t2_rep, t3_rep = parts_split
                 calc = dict(
                     f1=f1, f2=f2, f3=f3,
                     d=d, K1=K1, K2=K2, K3=K3,
                     t1=t1, t2=t2, t3=t3,
-                    t1_base=anchor_terms[0], t2_base=anchor_terms[1], t3_base=anchor_terms[2],
-                    t1_star=t1s, t2_star=t2s, t3_star=t3s,
-                    T_LS=T_LS, T_exp=T_exp, alpha=alpha, beta=beta,
+                    t1_base=t1_indep, t2_base=t2_indep, t3_base=t3_indep,
+                    t1_star=t1_indep, t2_star=t2_indep, t3_star=t3_indep,
+                    T_LS=T_LS, T_exp=T_exp, T_total_min=T_exp, alpha=alpha, beta=beta,
                     sum_t=t1 + t2 + t3,
                     sum_base=sum_base,
                     delta=T_exp - T_LS,
@@ -1544,6 +1589,9 @@ class FourApp(tk.Tk):
                     anchor_model_total=extras.get("anchor_total_model"),
                     anchor_model_split=extras.get("anchor_split_model"),
                     ols_split=extras.get("ols_split"),
+                    parts_reparties=parts_split,
+                    parts_indep=anchor_terms,
+                    t1s_min=t1_rep, t2s_min=t2_rep, t3s_min=t3_rep,
                 )
         except Exception:
             pass
