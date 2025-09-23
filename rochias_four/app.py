@@ -1346,6 +1346,146 @@ class FourApp(tk.Tk):
             self._show_error(f"Saisie invalide : {e}")
             return
 
+        calc_mode = self.calc_mode.get()
+        if calc_mode == "maintenance":
+            try:
+                result = compute_times_maintenance(f1_in, f2_in, f3_in, units="auto")
+            except Exception as exc:
+                self._show_error(f"Mode maintenance indisponible : {exc}")
+                return
+
+            parts_minutes = (result.t1_min, result.t2_min, result.t3_min)
+            freq_display = (result.f1_hz, result.f2_hz, result.f3_hz)
+            parts_indep = parts_independantes(*freq_display)
+            sum_indep = sum(parts_indep)
+            anch = get_current_anchor()
+
+            self.seg_distances = [0.0, 0.0, 0.0]
+            self.seg_speeds = [float(val) for val in freq_display]
+            self.seg_durations = [value * 60.0 for value in parts_minutes]
+            self.total_duration = result.total_s
+            self.notified_stage1 = False
+            self.notified_stage2 = False
+            self.notified_exit = False
+
+            self.last_calc = dict(
+                f1=freq_display[0],
+                f2=freq_display[1],
+                f3=freq_display[2],
+                d=0.0,
+                K1=float("nan"),
+                K2=float("nan"),
+                K3=float("nan"),
+                t1=parts_minutes[0],
+                t2=parts_minutes[1],
+                t3=parts_minutes[2],
+                t1_base=parts_indep[0],
+                t2_base=parts_indep[1],
+                t3_base=parts_indep[2],
+                t1_star=parts_indep[0],
+                t2_star=parts_indep[1],
+                t3_star=parts_indep[2],
+                T_LS=result.total_min,
+                T_exp=result.total_min,
+                T_total=result.total_min,
+                T_total_min=result.total_min,
+                T_model_calc=result.total_min,
+                sum_t=sum(parts_minutes),
+                sum_base=sum_indep,
+                delta=0.0,
+                delta_parts=0.0,
+                K1_dist=anch.K1,
+                K2_dist=anch.K2,
+                K3_dist=anch.K3,
+                anchor_model_total=result.total_min,
+                anchor_model_split=parts_minutes,
+                ols_split=None,
+                parts_reparties=parts_minutes,
+                parts_reparties_model=parts_minutes,
+                parts_indep=parts_indep,
+                correction=0.0,
+                sum_indep=sum_indep,
+                t1s_min=parts_minutes[0],
+                t2s_min=parts_minutes[1],
+                t3s_min=parts_minutes[2],
+                parts_mode="repartition",
+                calc_mode="maintenance",
+            )
+
+            if hasattr(self, "bars_heading_label"):
+                self.bars_heading_label.config(
+                    text="Barres de chargement — Référence maintenance (L/v)"
+                )
+            if hasattr(self, "parts_section_label"):
+                self.parts_section_label.config(text="Référence maintenance (L/v)")
+
+            for row, minutes, freq, hms in zip(
+                self.stage_rows,
+                parts_minutes,
+                freq_display,
+                (result.t1_hms, result.t2_hms, result.t3_hms),
+            ):
+                row["time"].config(text=fmt_minutes(minutes))
+                row["detail"].config(text=f"{minutes:.2f} min | {hms}")
+                row["freq"].config(text=f"{freq:.2f} Hz")
+
+            self._update_kpi(
+                "t1",
+                fmt_minutes(parts_minutes[0]),
+                f"{parts_minutes[0]:.2f} min | {result.t1_hms}",
+            )
+            self._update_kpi(
+                "t2",
+                fmt_minutes(parts_minutes[1]),
+                f"{parts_minutes[1]:.2f} min | {result.t2_hms}",
+            )
+            self._update_kpi(
+                "t3",
+                fmt_minutes(parts_minutes[2]),
+                f"{parts_minutes[2]:.2f} min | {result.t3_hms}",
+            )
+            self._update_kpi(
+                "total",
+                fmt_minutes(result.total_min),
+                f"{result.total_min:.2f} min | {result.total_hms}",
+            )
+
+            self.lbl_total_big.config(
+                text=f"Référence maintenance (L/v) : {fmt_minutes(result.total_min)} | {result.total_hms}"
+            )
+
+            info = (
+                "→ Mode maintenance L/v : t_i = Lconv_i * C_i / UI_i (référence tableur).\n"
+                f"UI = {result.ui1:.0f} / {result.ui2:.0f} / {result.ui3:.0f}"
+                f" | t₁={result.t1_hms}, t₂={result.t2_hms}, t₃={result.t3_hms}"
+                f" | Total={result.total_hms}"
+            )
+            self.lbl_analysis_info.config(text=info)
+
+            self._update_stat_card("ls", "n/a", "Mode maintenance")
+            self._update_stat_card("sum", "n/a", "Mode maintenance")
+            self._update_stat_card("alpha", "n/a", "Mode maintenance")
+            self._update_stat_card("delta", "n/a", "Mode maintenance")
+
+            self._hide_correction_row()
+            self._set_stage_status(0, "ready")
+            self._set_stage_status(1, "idle")
+            self._set_stage_status(2, "idle")
+
+            self._update_bar_targets("repartition")
+
+            try:
+                if hasattr(self, "graph_window") and self.graph_window and self.graph_window.winfo_exists():
+                    self.graph_window.redraw_with_mode("maintenance")
+            except Exception:
+                pass
+
+            self.btn_start.config(state="disabled")
+            self.btn_pause.config(state="disabled", text="⏸ Pause")
+            self.btn_calculer.config(state="normal")
+
+            return
+
         calc = compute_simulation_plan(f1, f2, f3)
         extras = getattr(calc, "extras", {})
         t1_ls, t2_ls, t3_ls = calc.ls_durations
