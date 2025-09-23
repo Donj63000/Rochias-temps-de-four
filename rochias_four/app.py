@@ -51,6 +51,7 @@ from .utils import fmt_hms, fmt_minutes, parse_hz
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
 from .graphs import GraphWindow
 from .calibration_window import CalibrationWindow
+from .speed_overrides import load_speed_from_disk
 
 
 class FourApp(tk.Tk):
@@ -117,6 +118,7 @@ class FourApp(tk.Tk):
 
         # UI
         self._build_ui()
+        load_speed_from_disk()
         load_anchor_from_disk()
         self.set_density(True)
         self._set_default_inputs()
@@ -136,6 +138,12 @@ class FourApp(tk.Tk):
         self.after(0, self._fit_to_screen)
 
         self.parts_mode.trace_add("write", self._on_parts_mode_changed)
+
+    def refresh_after_calibration(self):
+        # Recalcule le scénario courant avec les overrides qui viennent d'être appliqués
+        # (tes calculs de temps ne changent pas ; si tu affiches des vitesses dans l'UI/graph,
+        # tu peux relire get_current_speedset() ici).
+        self.on_calculer()
 
     def _fit_to_screen(self, margin=60):
         self.update_idletasks()
