@@ -1,227 +1,166 @@
 Rochias – Temps de Four (3 tapis)
 
-Application de bureau (Tkinter) pour estimer et suivre en temps réel les temps de passage sur un four à 3 tapis, en s’appuyant exclusivement sur la méthode maintenance “tableur (L/v)”.
-Le logiciel reprend les constantes et la logique calculées par la maintenance dans le classeur et fournit :
+Application de bureau (Tkinter) pour estimer et suivre en temps réel les temps de passage dans un four industriel à 3 tapis.
 
-POUR TELECHARGER LE .EXE CLIQUEZ SUR "ACTIONS" en haut à gauche, et selectionnez la dernière version, vous pourrez téléchargez directement le .EXE d'ici ! ;)
+👉 La méthode utilisée est exclusivement la méthode maintenance “tableur (L/v)”, validée et entretenue par la maintenance de Rochias.
+Toutes les autres approches (régressions, “synergie”…) ont été retirées pour éviter toute ambiguïté.
 
-le temps total et les temps par tapis ;
+📌 Dédicace spéciale à Romain et Taha de la maintenance Rochias, dont le travail minutieux sur les données et le tableur est la base de ce logiciel.
 
-des barres de progression par tapis avec marquage des cellules ;
+Fonctionnalités principales
 
-un graphe h(t) donnant une vision continue de l’épaisseur de couche sur le temps ;
+Calcul du temps total et du temps par tapis (t₁, t₂, t₃).
 
-la simulation en temps réel (pause/reprise) et l’annotation des arrêts d’alimentation (trous) ;
+Barres de progression dynamiques avec repères par cellules.
 
-des exports CSV (résultats) et PS (barres).
+Graphe épaisseur h(t) pour visualiser la couche produit dans le temps.
 
-🟩 Méthode retenue = Référence maintenance (L/v).
-Toutes les autres approches (régressions, “synergie”, etc.) ont été retirées de l’interface pour éviter toute ambiguïté.
+Simulation temps réel (pause, reprise).
 
-Sommaire
+Gestion des arrêts d’alimentation → affichage de “trous” sur les barres.
 
-Aperçu
+Export des résultats en CSV et PostScript (PS).
 
-Installation
+Comment ça marche (vue simple)
 
-Lancer l’application
+L’utilisateur saisit la vitesse de chaque tapis :
 
-Utilisation
+Soit en Hz (ex. 40.00)
 
-Détails des calculs (TXT)
+Soit en IHM × 100 (ex. 4000 → 40 Hz).
+Règle : toute valeur > 200 est automatiquement interprétée comme une saisie IHM et divisée par 100.
 
-Paramétrage / Maintenance
+Le logiciel applique les formules du tableur maintenance (référence L/v).
 
-Structure du projet
+Les temps par tapis et le temps total sont calculés exactement comme dans le fichier Excel d’origine.
 
-Raccourcis clavier
+En option, si l’épaisseur d’entrée h₀ est renseignée, l’application calcule aussi l’évolution d’épaisseur de la couche (indicateur visuel, n’influe pas sur les temps).
 
-FAQ
+Les formules (référence maintenance L/v)
+1. Temps par tapis
 
-Crédits
+Pour chaque tapis i :
 
-Aperçu
+t_i (secondes) = K_i / f_i
 
-Entrées : fréquences variateur des 3 tapis (en Hz ou IHM×100), et épaisseur d’entrée h₀ en cm pour l’affichage de l’épaisseur de couche.
 
-Sorties : t₁, t₂, t₃ (min & h:m:s) et total ; barres par tapis ; graphe h(t).
+où :
 
-L’interface affiche “Méthode tableur (L/v)” pour rappeler que c’est la source de vérité.
+f_i = vitesse du tapis i en Hz (après conversion IHM → Hz si besoin)
 
-Installation
+K_i = constante maintenance du tapis i (en s·Hz), qui dépend de :
 
-Prérequis : Python 3.10+ (3.11 recommandé) et pip.
+Lconv_i = longueur de convoyage du tapis (en m ou cm selon le relevé)
 
-git clone https://github.com/Donj63000/Rochias-temps-de-four.git
-cd Rochias-temps-de-four
-python -m venv .venv
-# Windows
-.venv\Scripts\pip install -r requirements.txt
-# Linux/Mac
-source .venv/bin/activate && pip install -r requirements.txt
+C_i = coefficient associé à ce tapis (sans dimension, fourni par la maintenance)
 
+Ainsi :
 
-💡 Un workflow GitHub Actions (workflows/build.yml) permet de générer un exécutable via PyInstaller.
+K_i = Lconv_i × C_i
 
-Lancer l’application
-# Depuis la racine du dépôt
-python -m rochias_four
-# ou
-python Main.py
 
-Utilisation
+Conversion en minutes :
 
-Saisir les vitesses des tapis :
+t_i (minutes) = t_i (secondes) / 60
 
-en Hz (ex. 40.00)
 
-ou en IHM×100 (ex. 4000).
-Toute valeur > 200 est automatiquement interprétée comme une entrée IHM et divisée par 100 pour obtenir les Hz.
+Temps total :
 
-(Optionnel) h₀ (cm) : épaisseur en entrée ; sert uniquement aux indicateurs/graph de couche.
+T_total = t1 + t2 + t3
 
-Cliquer Calculer.
-L’application affiche t₁, t₂, t₃, le total et prépare les barres.
+2. Épaisseur de couche (visualisation)
 
-Démarrer (temps réel) pour animer les barres.
+On introduit des constantes d’ancrage K’_i (min·Hz), issues des calibrations maintenance.
+Elles ne modifient pas les temps, seulement l’affichage de la cohérence d’épaisseur.
 
-Arrêt alimentation / Reprise : enregistre des arrêts de chargement ; des “trous” sont visualisés sur les barres.
+On calcule des capacités relatives :
 
-Pause met en pause la simulation.
+u_i = f_i / K’_i
 
-Graphiques : ouvre le graphe épaisseur h(t) vs temps partitionné par tapis.
 
-Export CSV / Export PS (barres) dans le panneau “Détails résultats”.
+Puis, à partir de l’épaisseur d’entrée h₀ (cm) :
 
-Détails des calculs (TXT)
+h1 = h0
+h2 = h0 × (u1 / u2)   (si u2 > 0)
+h3 = h0 × (u1 / u3)   (si u3 > 0)
 
-Source de vérité : le tableur maintenance.
-La logique ci-dessous reproduit exactement la feuille “L/v”.
 
-ENTRÉES
+On en déduit les variations affichées dans l’UI :
 
-  f1, f2, f3 : vitesses tapis 1–3 (Hz).
-               Règle d’entrée : si valeur > 200 → on considère une saisie IHM×100
-               et on convertit en Hz par f = valeur / 100.
+Δ1→2 (%) = ((u1 / u2) - 1) × 100
+Δ2→3 (%) = ((u2 / u3) - 1) × 100
 
-  h0 : épaisseur d’entrée (cm) – optionnelle, utile pour la visualisation de couche.
+3. Simulation temps réel
 
+Chaque barre correspond à un tapis avec une durée cible (t₁, t₂, t₃).
 
-MODÈLE TEMPS (référence maintenance “L/v”)
+Les barres sont divisées en 3 cellules pour correspondre aux zones physiques du four.
 
-  Pour chaque tapis i ∈ {1,2,3} :
+Les arrêts d’alimentation (boutons “Arrêt” / “Reprise”) introduisent des “trous” dans la progression.
 
-    ti(sec) = Ki / fi
-           = (Lconv_i × Ci) / fi
+Exemple pratique
 
-  où :
-   - fi est la vitesse en Hz (après conversion IHM → Hz si besoin),
-   - Ki est une constante globale (en s·Hz) propre au tapis i,
-     équivalente à la somme des segments du tableur (distance × coefficient),
-   - Lconv_i et Ci sont les constantes maintenance regroupées par tapis.
+Entrées :
 
-  L’application retourne :
-    ti(min) = ti(sec) / 60
-    T_total(min) = t1(min) + t2(min) + t3(min)
+Tapis 1 : 4000 IHM (→ 40 Hz)
+Tapis 2 : 5000 IHM (→ 50 Hz)
+Tapis 3 : 9000 IHM (→ 90 Hz)
+h₀ : 2.0 cm
 
-  Les constantes Ki (ou Lconv_i et Ci) sont définies dans le code de
-  référence maintenance (voir maintenance_ref.py).
 
+Sorties (selon tableur maintenance) :
 
-MODÈLE ÉPAISSEUR (affichage & graph h(t))
+Tapis 1 : 63 min 40 s
+Tapis 2 : 35 min 42 s
+Tapis 3 : 109 min 21 s
+Temps total : 3 h 08 min 43 s
 
-  On utilise des « ancrages » K'i (min·Hz) pour définir des capacités relatives :
 
-    ui = fi / K'i
+Affichage des variations d’épaisseur :
 
-  puis, à partir de l’épaisseur d’entrée h0 :
-
-    h1 = h0
-    h2 = h0 × (u1 / u2)  si u2 > 0
-    h3 = h0 × (u1 / u3)  si u3 > 0
-
-  Les variations affichées dans l’UI :
-    Δ12% = ((u1/u2) - 1) × 100
-    Δ23% = ((u2/u3) - 1) × 100
-
-  Ces K'i ne modifient PAS les temps (ils ne servent qu’à la visualisation
-  de couche/cohérence d’épaisseur). Ils sont configurables (voir calibration_overrides).
-
-
-AFFICHAGE / SIMULATION
-
-  • Barres : durées cibles = (t1, t2, t3) en secondes.
-  • Marqueurs « Cellule 1..9 » pour repères visuels.
-  • Boutons Arrêt/Reprise = enregistre des gaps sur la chronologie ;
-    des trous sont dessinés sur les barres du/des tapis concernés.
-
-Paramétrage / Maintenance
-
-Constantes de calcul temps (L/v)
-Fichier : rochias_four/maintenance_ref.py
-Ce module regroupe les constantes Kᵢ ou, selon l’implémentation choisie, les couples Lconvᵢ et Cᵢ.
-→ Ce sont les seules valeurs qui impactent les temps.
-Toute mise à jour du tableur se répercute ici.
-
-Ancrages K′ᵢ (épaisseur/graph)
-Fichier : rochias_four/calibration_overrides.py (+ éventuel JSON de persistance)
-Sert uniquement aux indicateurs d’épaisseur et au graphe h(t).
-N’influe pas sur les temps.
-
-Seuil IHM↔Hz
-La règle “> 200 ⇒ IHM×100” est codée au niveau de la lecture des entrées.
+Δ1→2 = +174 % (h2 ≈ 5.47 cm)
+Δ2→3 = +53 %  (h3 ≈ 8.39 cm)
 
 Structure du projet
 rochias_four/
-├── app.py                   # Application Tkinter (UI, simulation temps réel)
-├── graphs.py                # Fenêtre & tracé du graphe d’épaisseur h(t)
-├── maintenance_ref.py       # *** Référence maintenance : calcul L/v ***
-├── calculations.py          # Outils d’épaisseur (uᵢ, hᵢ) & indicateurs
-├── calibration_overrides.py # Ancrages K′ᵢ (visualisation)
-├── widgets.py               # SegmentedBar & composants UI
-├── theme*.py                # Thèmes & styles
-├── utils.py                 # parse des vitesses, formats (hh:mm:ss,…)
-├── flow.py                  # Calcul des « trous » (arrêts alimentation)
-└── config.py                # valeurs par défaut & tick simulation
-
-
-Les anciennes approches (régressions, “synergie”) ont été retirées de l’UI.
-Le code restant se concentre sur la méthode maintenance.
+│── app.py                # Application Tkinter (UI principale)
+│── graphs.py             # Graphe h(t) par tapis
+│── maintenance_ref.py    # Formules de référence L/v + constantes K_i
+│── calculations.py       # Fonctions d’épaisseur et variations Δ
+│── calibration_overrides.py # Ancrages K’_i (visualisation épaisseur)
+│── widgets.py            # Barres segmentées & composants UI
+│── theme.py / theme_manager.py # Gestion des thèmes (clair/sombre)
+│── utils.py              # Parsing vitesses, formatage temps
+│── flow.py               # Gestion des arrêts (trous alimentation)
+│── config.py             # Valeurs par défaut et tick simulation
 
 Raccourcis clavier
 
 Entrée : Calculer
 
-F5 : Démarrer la simulation
+F5 : Démarrer simulation
 
-Espace : Pause/Reprise
+Espace : Pause / Reprise
 
 Ctrl+R : Réinitialiser
 
-F1 : Ouvrir l’aide (explications)
+F1 : Aide / Explications
 
 FAQ
 
-Q. Les temps diffèrent légèrement du tableur.
-R. Vérifier les constantes dans maintenance_ref.py (Kᵢ / Lconvᵢ / Cᵢ) et la conversion IHM→Hz. Sur notre banc d’essai, l’écart est de l’ordre de quelques secondes, ce qui est conforme (arrondis min/Hz/h:m:s).
+Q. Pourquoi mes résultats diffèrent légèrement du tableur ?
+R. Vérifier les constantes dans maintenance_ref.py et la conversion IHM↔Hz. Les écarts de quelques secondes sont normaux (arrondis).
 
-Q. L’épaisseur affichée ne correspond pas à une mesure physique.
-R. Normal : c’est une cohérence relative (capacités uᵢ) pour piloter les vitesses. Seules les constantes maintenance influencent les temps.
+Q. L’épaisseur affichée ne correspond pas à une mesure réelle ?
+R. Normal. Elle sert uniquement à représenter la cohérence relative entre tapis.
 
-Q. Puis‑je remettre la méthode “synergie” ?
-R. Le projet présent est verrouillé sur la référence maintenance (L/v) pour éviter toute ambiguïté de calcul.
+Q. Puis-je réactiver la méthode “synergie” ?
+R. Non. Le projet est verrouillé sur la référence maintenance L/v pour éviter toute confusion.
 
 Crédits
 
-Application & intégration : équipe Rochias
+Application & intégration : Équipe Rochias
 
-Méthode de calcul : Maintenance Rochias (référence “tableur L/v”)
+Méthode de calcul : Maintenance Rochias (référence tableur L/v)
 
-Dédicace : Romain & Taha — Rochias. Merci pour le travail de fond et les données qui rendent ces estimations robustes et opérationnelles.
-- 
-ochias_four/utils.py : fonctions de formatage et de parsing.
-- 
-ochias_four/config.py : valeurs de configuration partagees.
-- 
-ochias_four/theme.py : palette de couleurs.
-
+Dédicace : Romain & Taha (Maintenance Rochias) pour leur travail de fond sur les constantes et le tableur.
