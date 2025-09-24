@@ -48,30 +48,24 @@ class FourApp(tk.Tk):
                     ctypes.windll.user32.SetProcessDPIAware()
                 except Exception:
                     pass
-
         super().__init__()
         self.theme = ThemeManager(self)
         self.theme.load_saved_or("light")
         self._update_theme_palette()
         self._sync_theme_attributes()
-
         self.title("Four • 3 Tapis — Référence maintenance (L/v)")
         self.configure(bg=BG)
         self.minsize(1100, 700)
-
         self._toasts = []
         self._cards = []
         self._responsive_labels = []
         self.compact_mode = False
-
         self.feed_events: list[GapEvent] = []
         self.feed_on = True
         self.accum_badges: list[ttk.Label | None] = []
         self.bars_heading_label: ttk.Label | None = None
-
         self._init_styles()
         self._apply_option_defaults()
-
         self.animating = False
         self.paused = False
         self.seg_idx = 0
@@ -85,30 +79,25 @@ class FourApp(tk.Tk):
         self.notified_stage1 = False
         self.notified_stage2 = False
         self.notified_exit = False
-
         self.stage_status = []
         self.kpi_labels = {}
         self.stage_rows = []
         self.graph_window = None
         self.operator_mode = True
-
         self.logo_img = None
         self._error_after = None
         self._load_logo()
-
         self._build_ui()
         load_speed_from_disk()
         load_anchor_from_disk()
         self.set_density(True)
         self._set_default_inputs()
         self.set_operator_mode(True)
-
         self.bind_all("<Return>", lambda e: self.on_calculer())
         self.bind_all("<F5>", lambda e: self.on_start())
         self.bind_all("<space>", lambda e: self.on_pause() if self.animating else None)
         self.bind_all("<Control-r>", lambda e: self.on_reset())
         self.bind_all("<F1>", lambda e: self.on_explanations())
-
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(0, self._auto_scaling)
         self.after(0, self._load_prefs)
@@ -117,13 +106,11 @@ class FourApp(tk.Tk):
     @staticmethod
     def _blend_colors(color_a: str, color_b: str, ratio: float) -> str:
         ratio = max(0.0, min(1.0, float(ratio)))
-
         def _to_rgb(value: str) -> tuple[int, int, int]:
             value = value.strip().lstrip("#")
             if len(value) != 6:
                 value = value[:6].ljust(6, "0")
             return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
-
         r1, g1, b1 = _to_rgb(color_a)
         r2, g2, b2 = _to_rgb(color_b)
         r = round(r1 + (r2 - r1) * ratio)
@@ -133,17 +120,14 @@ class FourApp(tk.Tk):
 
     def _update_theme_palette(self):
         from . import theme as theme_constants
-
         colors = self.theme.colors
         blend = self._blend_colors
         lighten = lambda c, amount: blend(c, "#FFFFFF", amount)
         darken = lambda c, amount: blend(c, "#000000", amount)
-
         secondary = blend(colors["panel"], colors["surface"], 0.5)
         track = blend(colors["panel"], colors["bg"], 0.5)
         accent_hover = darken(colors["accent"], 0.2) if self.theme.current == "light" else lighten(colors["accent"], 0.2)
         secondary_hover_target = colors["surface"] if self.theme.current == "dark_rouge" else colors["bg"]
-
         palette = {
             "BG": colors["bg"],
             "CARD": colors["surface"],
@@ -164,7 +148,6 @@ class FourApp(tk.Tk):
             "HOLE": blend(colors["warn"], colors["panel"], 0.6),
             "HOLE_BORDER": colors["warn"],
         }
-
         self._palette = palette
         for key, value in palette.items():
             setattr(theme_constants, key, value)
@@ -194,20 +177,17 @@ class FourApp(tk.Tk):
         self.configure(bg=BG)
         self._init_styles()
         self._apply_option_defaults()
-
         for wrapper, _inner in self._cards:
             try:
                 wrapper.configure(bg=BORDER, highlightbackground=BORDER, highlightcolor=BORDER)
             except Exception:
                 pass
-
         body = getattr(self, "body_frame", None)
         if body is not None:
             try:
                 body.refresh_theme()
             except Exception:
                 pass
-
         for bar in getattr(self, "bars", []):
             try:
                 if hasattr(bar, "refresh_theme"):
@@ -217,7 +197,6 @@ class FourApp(tk.Tk):
                     bar.redraw()
             except Exception:
                 pass
-
         for window in self.winfo_children():
             if isinstance(window, tk.Toplevel):
                 try:
@@ -230,13 +209,11 @@ class FourApp(tk.Tk):
                             child.configure(bg=CARD, fg=TEXT, insertbackground=TEXT)
                         except Exception:
                             pass
-
         if hasattr(self, "details") and isinstance(self.details, Collapsible):
             try:
                 self.details.configure(style="CardInner.TFrame")
             except Exception:
                 pass
-
         if self.graph_window and self.graph_window.winfo_exists():
             try:
                 self.graph_window.redraw_with_theme(self.theme)
@@ -287,11 +264,9 @@ class FourApp(tk.Tk):
         y = self.winfo_rooty() + 20
         tip.geometry(f"+{x}+{y}")
         tip.after(ms, tip.destroy)
-
         def _cleanup(_=None):
             if tip in self._toasts:
                 self._toasts.remove(tip)
-
         tip.bind("<Destroy>", _cleanup)
         self._toasts.append(tip)
 
@@ -403,11 +378,9 @@ class FourApp(tk.Tk):
     def _init_styles(self):
         style = self.theme.style
         base_font = ("Segoe UI", 11)
-
         style.configure("TFrame", background=BG)
         style.configure("Card.TFrame", background=CARD)
         style.configure("CardInner.TFrame", background=CARD)
-
         style.configure("TLabel", background=BG, foreground=TEXT, font=base_font)
         style.configure("Card.TLabel", background=CARD, foreground=TEXT, font=base_font)
         style.configure("Title.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 17))
@@ -422,31 +395,24 @@ class FourApp(tk.Tk):
         style.configure("Mono.TLabel", background=CARD, foreground="#3b7e63", font=("Consolas", 11))
         style.configure("Status.TLabel", background=CARD, foreground=SUBTEXT, font=("Consolas", 11))
         style.configure("Footer.TLabel", background=BG, foreground=SUBTEXT, font=("Segoe UI", 10))
-
         style.configure("Dark.TSeparator", background=BORDER)
         style.configure("TSeparator", background=BORDER)
-
         style.configure("StatCard.TFrame", background=SECONDARY, relief="flat")
         style.configure("StatTitle.TLabel", background=SECONDARY, foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
         style.configure("StatValue.TLabel", background=SECONDARY, foreground=TEXT, font=("Segoe UI", 18, "bold"))
         style.configure("StatDetail.TLabel", background=SECONDARY, foreground=SUBTEXT, font=("Consolas", 11))
-
         style.configure("ParamName.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
         style.configure("ParamValue.TLabel", background=CARD, foreground=TEXT, font=("Consolas", 11))
-
         style.configure("HeroStat.TFrame", background="#ecfdf5", relief="flat")
         style.configure("HeroStatValue.TLabel", background="#ecfdf5", foreground=ACCENT, font=("Segoe UI", 22, "bold"))
         style.configure("HeroStatLabel.TLabel", background="#ecfdf5", foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
         style.configure("HeroStatDetail.TLabel", background="#ecfdf5", foreground=SUBTEXT, font=("Segoe UI", 10))
-
         style.configure("Logo.TLabel", background=CARD)
-
         style.configure("StageRow.TFrame", background=CARD)
         style.configure("StageTitle.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI Semibold", 12))
         style.configure("StageFreq.TLabel", background=CARD, foreground=SUBTEXT, font=("Consolas", 11))
         style.configure("StageTime.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI Semibold", 18))
         style.configure("StageTimeDetail.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI", 10))
-
         style.configure(
             "Accent.TButton",
             background=ACCENT,
@@ -462,7 +428,6 @@ class FourApp(tk.Tk):
             background=[("active", ACCENT_HOVER), ("disabled", ACCENT_DISABLED)],
             foreground=[("disabled", "#0f5132")],
         )
-
         style.configure(
             "Ghost.TButton",
             background=SECONDARY,
@@ -478,7 +443,6 @@ class FourApp(tk.Tk):
             background=[("active", SECONDARY_HOVER), ("disabled", "#edf6f0")],
             foreground=[("disabled", "#7c8f82")],
         )
-
         style.configure(
             "Chip.TButton",
             background="#f0fdf4",
@@ -494,7 +458,6 @@ class FourApp(tk.Tk):
             background=[("active", "#dcfce7"), ("disabled", "#f0f1ef")],
             foreground=[("disabled", "#7c8f82")],
         )
-
         style.configure(
             "Dark.TEntry",
             fieldbackground=FIELD,
@@ -509,7 +472,6 @@ class FourApp(tk.Tk):
             bordercolor=[("focus", ACCENT)],
             foreground=[("disabled", SUBTEXT)],
         )
-
         style.configure(
             "Dark.TSpinbox",
             fieldbackground=FIELD,
@@ -525,7 +487,6 @@ class FourApp(tk.Tk):
             bordercolor=[("focus", ACCENT)],
             foreground=[("disabled", SUBTEXT)],
         )
-
         style.configure(
             "Accent.TRadiobutton",
             background=CARD,
@@ -540,7 +501,6 @@ class FourApp(tk.Tk):
             indicatorcolor=[("selected", ACCENT), ("!selected", BORDER)],
             foreground=[("disabled", "#7c8f82")],
         )
-
         badge_font = ("Segoe UI Semibold", 10)
         style.configure("BadgeIdle.TLabel", background=SECONDARY, foreground=SUBTEXT, font=badge_font, padding=(10, 2))
         style.configure("BadgeReady.TLabel", background="#bbf7d0", foreground=ACCENT, font=badge_font, padding=(10, 2))
@@ -548,7 +508,6 @@ class FourApp(tk.Tk):
         style.configure("BadgeDone.TLabel", background=ACCENT_HOVER, foreground="#ffffff", font=badge_font, padding=(10, 2))
         style.configure("BadgePause.TLabel", background=ACCENT_DISABLED, foreground=TEXT, font=badge_font, padding=(10, 2))
         style.configure("BadgeNeutral.TLabel", background="#d1eddb", foreground=TEXT, font=badge_font, padding=(10, 2))
-
         self.style = style
 
     def _load_logo(self):
@@ -559,22 +518,18 @@ class FourApp(tk.Tk):
             img = tk.PhotoImage(file=str(path))
         except tk.TclError:
             return
-
         max_height = 72
         max_width = 260
         height = img.height()
         width = img.width()
-
         if height > max_height:
             factor = max(1, int(math.ceil(height / max_height)))
             img = img.subsample(factor, factor)
             height = img.height()
             width = img.width()
-
         if width > max_width:
             factor = max(1, int(math.ceil(width / max_width)))
             img = img.subsample(factor, factor)
-
         self.logo_img = img
 
     def _card(self, parent, *, padding=(20, 16), **pack_kwargs):
@@ -607,35 +562,28 @@ class FourApp(tk.Tk):
     def _build_ui(self):
         header = self._card(self, fill="x", padx=18, pady=(16, 8), padding=(28, 22))
         header.columnconfigure(0, weight=1)
-
         accent = tk.Frame(header, background=ACCENT, height=4)
         accent.grid(row=0, column=0, sticky="ew", pady=(0, 16))
         header.grid_rowconfigure(0, weight=0)
         header.grid_rowconfigure(1, weight=1)
-
         hero = ttk.Frame(header, style="Card.TFrame")
         hero.grid(row=1, column=0, sticky="ew")
         hero.columnconfigure(0, weight=0)
         hero.columnconfigure(1, weight=1)
         hero.columnconfigure(2, weight=0)
         hero.grid_rowconfigure(3, weight=1)
-
         if self.logo_img is not None:
             ttk.Label(hero, image=self.logo_img, style="Logo.TLabel").grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 20))
-
         title = ttk.Label(hero, text="Simulation four 3 tapis — Référence maintenance (L/v)", style="HeroTitle.TLabel")
         title.grid(row=0, column=1, sticky="w")
-
         badge_box = ttk.Frame(hero, style="CardInner.TFrame")
         badge_box.grid(row=0, column=2, sticky="e", padx=(12, 0))
         ttk.Label(badge_box, text="Méthode tableur (L/v)", style="BadgeReady.TLabel").pack(side="left")
         self.density_button = ttk.Button(badge_box, text="Mode compact", style="Chip.TButton", command=lambda: self.set_density(not self.compact_mode))
         self.density_button.pack(side="left", padx=(8, 0))
-
         hero_stats = ttk.Frame(hero, style="CardInner.TFrame")
         hero_stats.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(18, 0))
         hero_stats.columnconfigure((0, 1, 2, 3), weight=1, uniform="hero")
-
         kpi_defs = [("total", "Temps total"), ("t1", "Tapis 1"), ("t2", "Tapis 2"), ("t3", "Tapis 3")]
         for idx, (key, label) in enumerate(kpi_defs):
             pill = ttk.Frame(hero_stats, style="HeroStat.TFrame", padding=(16, 12))
@@ -647,20 +595,16 @@ class FourApp(tk.Tk):
             detail.pack(anchor="w", pady=(2, 0))
             self.kpi_labels[key] = (value, detail)
         Tooltip(self.kpi_labels["total"][0], "Temps total par la référence maintenance (L/v).")
-
         body = VScrollFrame(self)
         body.pack(fill="both", expand=True)
         self.body_frame = body
-
         pcard = self._card(body.inner, fill="x", expand=False, padx=18, pady=8, padding=(24, 20))
         self.bars_heading_label = ttk.Label(pcard, text="Barres de chargement — Référence maintenance (L/v)", style="CardHeading.TLabel")
         self.bars_heading_label.pack(anchor="w", pady=(0, 12))
-
         self.bars = []
         self.bar_texts = []
         self.stage_status = []
         self.accum_badges = []
-
         for i in range(3):
             holder = ttk.Frame(pcard, style="CardInner.TFrame")
             holder.pack(fill="x", pady=10)
@@ -684,13 +628,10 @@ class FourApp(tk.Tk):
             self.stage_status.append(status_lbl)
             self.bars.append(bar)
             self.bar_texts.append(txt)
-
         top = ttk.Frame(body.inner, style="TFrame")
         top.pack(fill="x", expand=False, padx=18, pady=6)
-
         card_in = self._card(top, side="left", fill="both", expand=True, padx=(0, 0))
         card_in.columnconfigure(0, weight=1)
-
         ttk.Label(card_in, text="Entrées (fréquences variateur)", style="CardHeading.TLabel").pack(anchor="w", pady=(0, 12))
         g = ttk.Frame(card_in, style="CardInner.TFrame")
         g.pack(fill="x", pady=(12, 6))
@@ -705,18 +646,14 @@ class FourApp(tk.Tk):
         ttk.Label(g, text="Tapis 3 : Hz =", style="Card.TLabel").grid(row=2, column=0, sticky="e", padx=(0, 12), pady=6)
         self.e3 = ttk.Spinbox(g, from_=1, to=120, increment=0.01, format="%.2f", width=10, style="Dark.TSpinbox", validate="key", validatecommand=vcmd)
         self.e3.grid(row=2, column=1, sticky="w", pady=6)
-
         ttk.Label(g, text="Épaisseur entrée h0 (cm) =", style="Card.TLabel").grid(row=3, column=0, sticky="e", padx=(0, 12), pady=6)
         self.h0 = ttk.Spinbox(g, from_=0.10, to=20.0, increment=0.10, format="%.2f", width=10, style="Dark.TSpinbox", validate="key", validatecommand=vcmd)
         self.h0.grid(row=3, column=1, sticky="w", pady=6)
         self.h0.delete(0, tk.END)
         self.h0.insert(0, "2.00")
-
         ttk.Label(card_in, text="Astuce : 40.00 ou 4000 (IHM). >200 = IHM/100.", style="Hint.TLabel").pack(anchor="w", pady=(4, 12))
-
         self.err_box = ttk.Label(card_in, text="", style="Hint.TLabel")
         self.err_box.pack(anchor="w", pady=(0, 0))
-
         btns = ttk.Frame(card_in, style="CardInner.TFrame")
         btns.pack(fill="x", pady=(4, 8))
         btns.columnconfigure(6, weight=1)
@@ -730,15 +667,12 @@ class FourApp(tk.Tk):
         ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
         ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=5, pady=2, sticky="e")
         ttk.Button(btns, text="Thème", style=STYLE_NAMES["Button"], command=self.on_toggle_theme).grid(row=0, column=6, padx=(12, 0), pady=2, sticky="e")
-
         self.btn_feed_stop = ttk.Button(btns, text="⛔ Arrêt alimentation", command=self.on_feed_stop, state="disabled", style="Ghost.TButton")
         self.btn_feed_stop.grid(row=1, column=0, padx=(0, 12), pady=(8, 2), sticky="w")
         self.btn_feed_resume = ttk.Button(btns, text="✅ Reprise alimentation", command=self.on_feed_resume, state="disabled", style="Ghost.TButton")
         self.btn_feed_resume.grid(row=1, column=1, padx=(0, 12), pady=(8, 2), sticky="w")
-
         self.details = Collapsible(body.inner, title="Détails résultats (référence maintenance L/v)", open=False)
         self.details.pack(fill="x", padx=18, pady=(8, 0))
-
         card_out = self._card(self.details.body, fill="both", expand=True)
         card_out.bind("<Configure>", lambda e: self.lbl_analysis_info.configure(wraplength=max(200, int(e.width * 0.85))))
         card_out.columnconfigure(0, weight=1)
@@ -748,10 +682,8 @@ class FourApp(tk.Tk):
         ttk.Label(card_out, text="Formule : tᵢ = Lconvᵢ · Cᵢ / UIᵢ  — UI en IHM (x100), conversion automatique IHM↔Hz.", style="HeroSub.TLabel", wraplength=820, justify="left").pack(anchor="w", pady=(4, 2))
         self.lbl_analysis_info = ttk.Label(card_out, text="", style="Hint.TLabel", wraplength=820, justify="left")
         self.lbl_analysis_info.pack(anchor="w", pady=(0, 12))
-
         self.parts_section_label = ttk.Label(card_out, text="Référence maintenance (L/v)", style="CardHeading.TLabel")
         self.parts_section_label.pack(anchor="w", pady=(8, 0))
-
         stage_list = ttk.Frame(card_out, style="CardInner.TFrame")
         stage_list.pack(fill="x", pady=(0, 12))
         self.stage_rows = []
@@ -767,18 +699,14 @@ class FourApp(tk.Tk):
             detail_lbl = ttk.Label(row, text="--", style="StageTimeDetail.TLabel")
             detail_lbl.grid(row=1, column=2, sticky="e")
             self.stage_rows.append({"freq": freq_lbl, "time": time_lbl, "detail": detail_lbl})
-
         ttk.Separator(card_out, style="Dark.TSeparator").pack(fill="x", pady=8)
-
         footer = ttk.Frame(body.inner, style="TFrame")
         footer.pack(fill="x", padx=18, pady=(0, 16))
         ttk.Label(footer, text="Astuce : lance un calcul pour activer la simulation en temps réel.", style="Footer.TLabel").pack(anchor="w")
-
         for key in ("total", "t1", "t2", "t3"):
             self._update_kpi(key, "--", "--")
-
-        for idx in range(len(self.stage_status)):
-            self.stage_status[idx].config(text="⏳ En attente")
+        for i in range(len(self.stage_status)):
+            self._set_stage_status(i, "idle")
 
     def set_operator_mode(self, on: bool):
         self.operator_mode = bool(on)
@@ -875,8 +803,8 @@ class FourApp(tk.Tk):
         self.last_calc = None
         for key in ("total", "t1", "t2", "t3"):
             self._update_kpi(key, "--", "--")
-        for idx in range(len(self.stage_status)):
-            self.stage_status[idx].config(text="⏳ En attente")
+        for i in range(len(self.stage_status)):
+            self._set_stage_status(i, "idle")
 
     def on_graphs(self):
         if not self.last_calc:
@@ -901,7 +829,6 @@ class FourApp(tk.Tk):
         else:
             self._cancel_after()
         self._clear_error()
-
         try:
             raw1 = (self.e1.get() or "").strip()
             raw2 = (self.e2.get() or "").strip()
@@ -912,16 +839,13 @@ class FourApp(tk.Tk):
         except Exception as e:
             self._show_error(f"Saisie invalide : {e}")
             return
-
         try:
             result = compute_times_maintenance(f1_in, f2_in, f3_in, units="auto")
         except Exception as exc:
             self._show_error(f"Calcul maintenance indisponible : {exc}")
             return
-
         parts_minutes = (result.t1_min, result.t2_min, result.t3_min)
         freq_display = (float(result.f1_hz), float(result.f2_hz), float(result.f3_hz))
-
         self.seg_distances = [0.0, 0.0, 0.0]
         self.seg_speeds = [float(val) for val in freq_display]
         self.seg_durations = [value * 60.0 for value in parts_minutes]
@@ -929,7 +853,6 @@ class FourApp(tk.Tk):
         self.notified_stage1 = False
         self.notified_stage2 = False
         self.notified_exit = False
-
         self.last_calc = dict(
             f1=freq_display[0],
             f2=freq_display[1],
@@ -941,20 +864,19 @@ class FourApp(tk.Tk):
             t2_hms=result.t2_hms,
             t3_hms=result.t3_hms,
             total_hms=result.total_hms,
+            t1s_min=float(parts_minutes[0]),
+            t2s_min=float(parts_minutes[1]),
+            t3s_min=float(parts_minutes[2]),
         )
-
         for row, minutes, freq, hms in zip(self.stage_rows, parts_minutes, freq_display, (result.t1_hms, result.t2_hms, result.t3_hms)):
             row["time"].config(text=fmt_minutes(minutes))
             row["detail"].config(text=f"{minutes:.2f} min | {hms}")
             row["freq"].config(text=f"{freq:.2f} Hz")
-
         self._update_kpi("t1", fmt_minutes(parts_minutes[0]), f"{parts_minutes[0]:.2f} min | {result.t1_hms}")
         self._update_kpi("t2", fmt_minutes(parts_minutes[1]), f"{parts_minutes[1]:.2f} min | {result.t2_hms}")
         self._update_kpi("t3", fmt_minutes(parts_minutes[2]), f"{parts_minutes[2]:.2f} min | {result.t3_hms}")
         self._update_kpi("total", fmt_minutes(result.total_min), f"{float(result.total_min):.2f} min | {result.total_hms}")
-
         self.lbl_total_big.config(text=f"Référence maintenance (L/v) : {fmt_minutes(result.total_min)} | {result.total_hms}")
-
         try:
             h0_cm = float(self.h0.get().replace(",", "."))
             if not (h0_cm > 0):
@@ -962,22 +884,18 @@ class FourApp(tk.Tk):
         except Exception:
             h0_cm = 2.0
         th = thickness_and_accum(self.seg_speeds[0], self.seg_speeds[1], self.seg_speeds[2], h0_cm)
-
         def _badge_style(pct: float) -> str:
             if pct > 0.5:
                 return "BadgeActive.TLabel"
             if pct < -0.5:
                 return "BadgeReady.TLabel"
             return "BadgeNeutral.TLabel"
-
         if len(self.accum_badges) > 1 and self.accum_badges[1] is not None:
             txt12 = f"Variation épaisseur 1→2 : {th['A12_pct']:+.0f}% | h₂≈{th['h2_cm']:.2f} cm"
             self.accum_badges[1].config(text=txt12, style=_badge_style(th["A12_pct"]))
-
         if len(self.accum_badges) > 2 and self.accum_badges[2] is not None:
             txt23 = f"Variation épaisseur 2→3 : {th['A23_pct']:+.0f}% | h₃≈{th['h3_cm']:.2f} cm"
             self.accum_badges[2].config(text=txt23, style=_badge_style(th["A23_pct"]))
-
         self.feed_events.clear()
         self.feed_on = True
         if hasattr(self, "btn_feed_stop"):
@@ -991,27 +909,22 @@ class FourApp(tk.Tk):
                 pass
         for txt in self.bar_texts:
             txt.config(text="En attente")
-
         info = (
             "Mode maintenance L/v : tᵢ = Lconvᵢ · Cᵢ / UIᵢ (référence tableur). "
             f"UI saisis = {f1_in:.2f} / {f2_in:.2f} / {f3_in:.2f} → Hz = {freq_display[0]:.2f} / {freq_display[1]:.2f} / {freq_display[2]:.2f}. "
             f"t₁={result.t1_hms}, t₂={result.t2_hms}, t₃={result.t3_hms} | Total={result.total_hms}"
         )
         self.lbl_analysis_info.config(text=info)
-
         self._apply_parts()
-
         try:
             if hasattr(self, "graph_window") and self.graph_window and self.graph_window.winfo_exists():
                 self.graph_window.redraw_with_mode("maintenance")
         except Exception:
             pass
-
         self.total_duration = sum(self.seg_durations)
         self.notified_stage1 = False
         self.notified_stage2 = False
         self.notified_exit = False
-
         self.btn_start.config(state="normal")
         self.btn_pause.config(state="disabled", text="⏸ Pause")
         self.btn_calculer.config(state="normal")
@@ -1119,7 +1032,6 @@ class FourApp(tk.Tk):
     def _tick(self):
         if not self.animating or self.paused:
             return
-
         i = self.seg_idx
         dur = max(1e-6, self.seg_durations[i])
         vitesse = self.seg_speeds[i]
@@ -1163,11 +1075,9 @@ class FourApp(tk.Tk):
                 self._set_stage_status(j + 1, "ready")
             self._schedule_tick()
             return
-
         pct = max(0.0, min(1.0, elapsed / dur)) * 100.0
         self.bars[i].set_progress(elapsed)
         self.bar_texts[i].config(text=f"{pct:5.1f}% | vitesse {vitesse:.2f} Hz | {fmt_hms(elapsed)} / {fmt_hms(dur)} | en cours")
-
         try:
             t_now_min = (sum(self.seg_durations[: self.seg_idx]) + max(0.0, elapsed)) / 60.0
             t1m = self.seg_durations[0] / 60.0
@@ -1188,7 +1098,6 @@ class FourApp(tk.Tk):
                     pass
         except Exception:
             pass
-
         self._schedule_tick()
 
     def export_csv(self):
@@ -1233,13 +1142,12 @@ class FourApp(tk.Tk):
             f1 = float(calc.get("f1", 0.0))
             f2 = float(calc.get("f2", 0.0))
             f3 = float(calc.get("f3", 0.0))
-            t1 = float(calc.get("parts_reparties", (0, 0, 0))[0])
-            t2 = float(calc.get("parts_reparties", (0, 0, 0))[1])
-            t3 = float(calc.get("parts_reparties", (0, 0, 0))[2])
+            t1 = float(calc.get("t1s_min", 0.0))
+            t2 = float(calc.get("t2s_min", 0.0))
+            t3 = float(calc.get("t3s_min", 0.0))
             T = float(calc.get("T_total_min", 0.0))
         except Exception:
             f1 = f2 = f3 = t1 = t2 = t3 = T = 0.0
-
         text = (
             "RÉFÉRENCE MAINTENANCE (L/v)\n\n"
             "Principe : pour chaque tapis i, le temps est tᵢ = Lconvᵢ · Cᵢ / UIᵢ.\n"
@@ -1247,25 +1155,20 @@ class FourApp(tk.Tk):
             "et affiche t₁, t₂, t₃ ainsi que le total.\n\n"
             f"Dernier calcul : f = {f1:.2f}/{f2:.2f}/{f3:.2f} Hz • t = {t1:.2f}/{t2:.2f}/{t3:.2f} min • Total = {T:.2f} min."
         )
-
         win = tk.Toplevel(self)
         win.title("Explications — Référence maintenance (L/v)")
         win.configure(bg=BG)
         win.geometry("900x640")
-
         txt = scrolledtext.ScrolledText(win, wrap="word", font=("Consolas", 11), bg=CARD, fg=TEXT, insertbackground=TEXT)
         txt.pack(fill="both", expand=True, padx=12, pady=12)
         txt.insert("1.0", text)
         txt.configure(state="disabled")
-
         bar = ttk.Frame(win, style="TFrame")
         bar.pack(fill="x", padx=12, pady=(0, 12))
-
         def _copy():
             self.clipboard_clear()
             self.clipboard_append(text)
             self.toast("Explications copiées")
-
         def _export():
             path = filedialog.asksaveasfilename(title="Exporter les explications", defaultextension=".txt", filetypes=[("Fichier texte", "*.txt"), ("Tous fichiers", "*.*")])
             if path:
@@ -1276,7 +1179,6 @@ class FourApp(tk.Tk):
                     self._show_error(f"Export TXT impossible : {e}")
                 else:
                     self.toast(f"Export TXT : {path}")
-
         ttk.Button(bar, text="Copier dans le presse-papiers", command=_copy, style="Ghost.TButton").pack(side="left")
         ttk.Button(bar, text="Exporter en .txt", command=_export, style="Ghost.TButton").pack(side="left", padx=(8, 0))
 
