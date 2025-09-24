@@ -121,30 +121,7 @@ Affichage des variations d’épaisseur :
 Δ1→2 = +174 % (h2 ≈ 5.47 cm)
 Δ2→3 = +53 %  (h3 ≈ 8.39 cm)
 
-Structure du projet
-rochias_four/
-│── app.py                # Application Tkinter (UI principale)
-│── graphs.py             # Graphe h(t) par tapis
-│── maintenance_ref.py    # Formules de référence L/v + constantes K_i
-│── calculations.py       # Fonctions d’épaisseur et variations Δ
-│── calibration_overrides.py # Ancrages K’_i (visualisation épaisseur)
-│── widgets.py            # Barres segmentées & composants UI
-│── theme.py / theme_manager.py # Gestion des thèmes (clair/sombre)
-│── utils.py              # Parsing vitesses, formatage temps
-│── flow.py               # Gestion des arrêts (trous alimentation)
-│── config.py             # Valeurs par défaut et tick simulation
 
-Raccourcis clavier
-
-Entrée : Calculer
-
-F5 : Démarrer simulation
-
-Espace : Pause / Reprise
-
-Ctrl+R : Réinitialiser
-
-F1 : Aide / Explications
 
 FAQ
 
@@ -164,3 +141,4 @@ Application & intégration : Équipe Rochias
 Méthode de calcul : Maintenance Rochias (référence tableur L/v)
 
 Dédicace : Romain & Taha (Maintenance Rochias) pour leur travail de fond sur les constantes et le tableur.
+
