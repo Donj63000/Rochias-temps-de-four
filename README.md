@@ -3,6 +3,8 @@ Rochias – Temps de Four (3 tapis)
 Application de bureau (Tkinter) pour estimer et suivre en temps réel les temps de passage sur un four à 3 tapis, en s’appuyant exclusivement sur la méthode maintenance “tableur (L/v)”.
 Le logiciel reprend les constantes et la logique calculées par la maintenance dans le classeur et fournit :
 
+POUR TELECHARGER LE .EXE CLIQUEZ SUR "ACTIONS" en haut à gauche, et selectionnez la dernière version, vous pourrez téléchargez directement le .EXE d'ici ! ;)
+
 le temps total et les temps par tapis ;
 
 des barres de progression par tapis avec marquage des cellules ;
@@ -216,6 +218,10 @@ Application & intégration : équipe Rochias
 Méthode de calcul : Maintenance Rochias (référence “tableur L/v”)
 
 Dédicace : Romain & Taha — Rochias. Merci pour le travail de fond et les données qui rendent ces estimations robustes et opérationnelles.
-- ochias_four/utils.py : fonctions de formatage et de parsing.
-- ochias_four/config.py : valeurs de configuration partagees.
-- ochias_four/theme.py : palette de couleurs.
+- 
+ochias_four/utils.py : fonctions de formatage et de parsing.
+- 
+ochias_four/config.py : valeurs de configuration partagees.
+- 
+ochias_four/theme.py : palette de couleurs.
+
