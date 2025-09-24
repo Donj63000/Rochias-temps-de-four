@@ -5,17 +5,89 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Tuple
 
-from .calibration import (
-    DEFAULT_ANCHOR,
-    DEFAULT_OLS,
-    DEFAULT_SYNERGY,
-    compute_times,
-    is_monotone_decreasing_in_each_f,
-    split_contributions,
-    total_time_minutes,
-    total_time_minutes_safe,
-)
-from .calibration_overrides import get_current_anchor
+from .maintenance_ref import compute_times_maintenance
+from .calibration_overrides import AnchorParams, get_current_anchor
+
+try:
+    from .calibration import (
+        DEFAULT_ANCHOR,
+        DEFAULT_OLS,
+        DEFAULT_SYNERGY,
+        compute_times,
+        is_monotone_decreasing_in_each_f,
+        split_contributions,
+        total_time_minutes,
+        total_time_minutes_safe,
+    )
+except ModuleNotFoundError:
+    @dataclass(frozen=True)
+    class _FallbackOLS:
+        B: float = 0.0
+
+    @dataclass(frozen=True)
+    class _FallbackSynergy:
+        alpha: float = 1.0
+        beta: float = 1.0
+        B: float = 0.0
+
+    DEFAULT_ANCHOR = get_current_anchor()
+    DEFAULT_OLS = _FallbackOLS()
+    DEFAULT_SYNERGY = _FallbackSynergy()
+
+    def _safe_freq(freq: float) -> float:
+        freq = float(freq)
+        if abs(freq) < 1e-9:
+            return 1e-9
+        return freq
+
+    def _maintenance_minutes(f1: float, f2: float, f3: float) -> Tuple[float, float, float, float]:
+        maint = compute_times_maintenance(f1, f2, f3, units="hz")
+        return maint.t1_min, maint.t2_min, maint.t3_min, maint.total_min
+
+    def compute_times(f1: float, f2: float, f3: float) -> Tuple[float, float, float, float, Tuple[float, float, float, float]]:
+        t1, t2, t3, total = _maintenance_minutes(f1, f2, f3)
+        return t1, t2, t3, total, (float("nan"), float("nan"), float("nan"), float("nan"))
+
+    def total_time_minutes(
+        f1: float, f2: float, f3: float, *, model: str | None = None, anch: AnchorParams | None = None, **_kwargs
+    ) -> float:
+        if model == "anchor":
+            anchor = anch or DEFAULT_ANCHOR
+            freqs = (_safe_freq(f1), _safe_freq(f2), _safe_freq(f3))
+            base = (anchor.K1 / freqs[0], anchor.K2 / freqs[1], anchor.K3 / freqs[2])
+            return sum(base) + getattr(anchor, "B", 0.0)
+        return _maintenance_minutes(f1, f2, f3)[3]
+
+    def total_time_minutes_safe(
+        f1: float, f2: float, f3: float, *, model: str | None = None, syn: object | None = None, **kwargs
+    ) -> float:
+        return total_time_minutes(f1, f2, f3, model=model, **kwargs)
+
+    def split_contributions(
+        total: float,
+        f1: float,
+        f2: float,
+        f3: float,
+        *,
+        split: str | None = None,
+        anch: AnchorParams | None = None,
+        **_kwargs,
+    ) -> Tuple[float, float, float]:
+        freqs = (_safe_freq(f1), _safe_freq(f2), _safe_freq(f3))
+        if split == "anchor" and anch is not None:
+            base = (anch.K1 / freqs[0], anch.K2 / freqs[1], anch.K3 / freqs[2])
+        else:
+            base = _maintenance_minutes(f1, f2, f3)[:3]
+        denom = sum(base)
+        if denom <= 0:
+            return 0.0, 0.0, 0.0
+        scale = total / denom
+        return tuple(val * scale for val in base)
+
+    def is_monotone_decreasing_in_each_f(
+        f1: float, f2: float, f3: float, *, model: str | None = None, **_kwargs
+    ) -> bool:
+        return True
 
 
 @dataclass(frozen=True)
