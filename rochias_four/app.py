@@ -35,7 +35,6 @@ from .theme_manager import ThemeManager, STYLE_NAMES
 from .utils import fmt_hms, fmt_minutes
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
 from .graphs import GraphWindow
-from .speed_overrides import load_speed_from_disk
 
 
 class FourApp(tk.Tk):
@@ -88,7 +87,6 @@ class FourApp(tk.Tk):
         self._error_after = None
         self._load_logo()
         self._build_ui()
-        load_speed_from_disk()
         load_anchor_from_disk()
         self.set_density(True)
         self._set_default_inputs()
