@@ -143,8 +143,10 @@ class FourApp(tk.Tk):
             "FILL": colors["accent"],
             "TRACK": track,
             "GLOW": lighten(colors["accent"], 0.45),
-            "HOLE": blend(colors["warn"], colors["panel"], 0.6),
-            "HOLE_BORDER": colors["warn"],
+
+            # <<< ICI : jauni les “trous”
+            "HOLE": "#FACC15",         # jaune (500) — rempli sur la partie passée
+            "HOLE_BORDER": "#A16207",  # jaune foncé — liseré sur la partie future
         }
         self._palette = palette
         for key, value in palette.items():
