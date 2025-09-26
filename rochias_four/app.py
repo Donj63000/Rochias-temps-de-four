@@ -35,6 +35,7 @@ from .theme_manager import ThemeManager, STYLE_NAMES
 from .utils import fmt_hms, fmt_minutes
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
 from .graphs import GraphWindow
+from .details_window import DetailsWindow
 
 
 class FourApp(tk.Tk):
@@ -656,7 +657,7 @@ class FourApp(tk.Tk):
         self.err_box.pack(anchor="w", pady=(0, 0))
         btns = ttk.Frame(card_in, style="CardInner.TFrame")
         btns.pack(fill="x", pady=(4, 8))
-        btns.columnconfigure(6, weight=1)
+        btns.columnconfigure(7, weight=1)
         self.btn_calculer = ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton")
         self.btn_calculer.grid(row=0, column=0, padx=(0, 12), pady=2, sticky="w")
         self.btn_start = ttk.Button(btns, text="▶ Démarrer (temps réel)", command=self.on_start, state="disabled", style="Accent.TButton")
@@ -665,8 +666,9 @@ class FourApp(tk.Tk):
         self.btn_pause.grid(row=0, column=2, padx=(0, 12), pady=2, sticky="w")
         ttk.Button(btns, text="↺ Réinitialiser", command=self.on_reset, style="Ghost.TButton").grid(row=0, column=3, pady=2, sticky="w")
         ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
-        ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=5, pady=2, sticky="e")
-        ttk.Button(btns, text="Thème", style=STYLE_NAMES["Button"], command=self.on_toggle_theme).grid(row=0, column=6, padx=(12, 0), pady=2, sticky="e")
+        ttk.Button(btns, text="🧭 Détails", command=self.on_details, style="Ghost.TButton").grid(row=0, column=5, pady=2, sticky="e")
+        ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=6, pady=2, sticky="e")
+        ttk.Button(btns, text="Thème", style=STYLE_NAMES["Button"], command=self.on_toggle_theme).grid(row=0, column=7, padx=(12, 0), pady=2, sticky="e")
         self.btn_feed_stop = ttk.Button(btns, text="⛔ Arrêt alimentation", command=self.on_feed_stop, state="disabled", style="Ghost.TButton")
         self.btn_feed_stop.grid(row=1, column=0, padx=(0, 12), pady=(8, 2), sticky="w")
         self.btn_feed_resume = ttk.Button(btns, text="✅ Reprise alimentation", command=self.on_feed_resume, state="disabled", style="Ghost.TButton")
@@ -823,6 +825,21 @@ class FourApp(tk.Tk):
         except Exception as e:
             self._show_error(f"Impossible d'ouvrir le graphique : {e}")
 
+    def on_details(self):
+        if not self.last_calc:
+            try:
+                self.on_calculer()
+            except Exception:
+                return
+        try:
+            if getattr(self, "details_window", None) and self.details_window.winfo_exists():
+                self.details_window.lift()
+                self.details_window.refresh_from_app()
+            else:
+                self.details_window = DetailsWindow(self)
+        except Exception as e:
+            self._show_error(f"Impossible d'ouvrir les détails : {e}")
+
     def on_calculer(self):
         if self.animating or self.paused:
             self.on_reset()
@@ -928,6 +945,11 @@ class FourApp(tk.Tk):
         self.btn_start.config(state="normal")
         self.btn_pause.config(state="disabled", text="⏸ Pause")
         self.btn_calculer.config(state="normal")
+        try:
+            if getattr(self, "details_window", None) and self.details_window.winfo_exists():
+                self.details_window.refresh_from_app()
+        except Exception:
+            pass
 
     def on_start(self):
         if self.animating:
