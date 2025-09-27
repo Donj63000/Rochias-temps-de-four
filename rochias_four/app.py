@@ -16,6 +16,11 @@ from .calculations import thickness_and_accum
 from .maintenance_ref import compute_times_maintenance
 from .calibration_overrides import load_anchor_from_disk
 from .flow import GapEvent, holes_for_all_belts
+from .segments import (
+    load_segment_weights,
+    compute_segment_times_minutes,
+    cumulative_markers_for_bar,
+)
 from .theme import (
     ACCENT,
     ACCENT_DISABLED,
@@ -657,7 +662,7 @@ class FourApp(tk.Tk):
         self.err_box.pack(anchor="w", pady=(0, 0))
         btns = ttk.Frame(card_in, style="CardInner.TFrame")
         btns.pack(fill="x", pady=(4, 8))
-        btns.columnconfigure(7, weight=1)
+        btns.columnconfigure(8, weight=1)
         self.btn_calculer = ttk.Button(btns, text="Calculer", command=self.on_calculer, style="Accent.TButton")
         self.btn_calculer.grid(row=0, column=0, padx=(0, 12), pady=2, sticky="w")
         self.btn_start = ttk.Button(btns, text="▶ Démarrer (temps réel)", command=self.on_start, state="disabled", style="Accent.TButton")
@@ -668,7 +673,13 @@ class FourApp(tk.Tk):
         ttk.Button(btns, text="ℹ Explications", command=self.on_explanations, style="Ghost.TButton").grid(row=0, column=4, pady=2, sticky="e")
         ttk.Button(btns, text="🧭 Détails", command=self.on_details, style="Ghost.TButton").grid(row=0, column=5, pady=2, sticky="e")
         ttk.Button(btns, text="📈 Graphiques", command=self.on_graphs, style="Ghost.TButton").grid(row=0, column=6, pady=2, sticky="e")
-        ttk.Button(btns, text="Thème", style=STYLE_NAMES["Button"], command=self.on_toggle_theme).grid(row=0, column=7, padx=(12, 0), pady=2, sticky="e")
+        ttk.Button(
+            btns,
+            text="🔎 Détails cellules/transferts",
+            command=self.on_details_segments,
+            style="Ghost.TButton"
+        ).grid(row=0, column=7, padx=(8, 0), pady=2, sticky="e")
+        ttk.Button(btns, text="Thème", style=STYLE_NAMES["Button"], command=self.on_toggle_theme).grid(row=0, column=8, padx=(12, 0), pady=2, sticky="e")
         self.btn_feed_stop = ttk.Button(btns, text="⛔ Arrêt alimentation", command=self.on_feed_stop, state="disabled", style="Ghost.TButton")
         self.btn_feed_stop.grid(row=1, column=0, padx=(0, 12), pady=(8, 2), sticky="w")
         self.btn_feed_resume = ttk.Button(btns, text="✅ Reprise alimentation", command=self.on_feed_resume, state="disabled", style="Ghost.TButton")
@@ -840,6 +851,73 @@ class FourApp(tk.Tk):
         except Exception as e:
             self._show_error(f"Impossible d'ouvrir les détails : {e}")
 
+    def on_details_segments(self):
+        calc = self.last_calc or {}
+        seg = calc.get("segments") or {}
+        times = seg.get("times_min") or {}
+        if not times:
+            self._show_error("Aucun détail segment. Lance d’abord un calcul.")
+            return
+
+        t1, t2, t3 = calc.get("parts_reparties", (0.0, 0.0, 0.0))
+
+        def line(label, minutes):
+            return f"{label:<18}  {fmt_minutes(minutes):>8}  ({minutes:6.2f} min | {fmt_hms(minutes * 60)})"
+
+        lines: list[str] = []
+        lines.append("TAPIS 1")
+        lines.append(line("Entrée (avant C1)", times.get("entry1", 0.0)))
+        lines.append(line("Cellule 1",          times.get("c1", 0.0)))
+        lines.append(line("Cellule 2",          times.get("c2", 0.0)))
+        lines.append(line("Cellule 3",          times.get("c3", 0.0)))
+        lines.append(line("Somme T1",           t1))
+        lines.append("")
+
+        lines.append("TRANSFERT 1 (T1→T2)")
+        lines.append(line("Transfer 1",         times.get("transfer1", 0.0)))
+        lines.append("")
+
+        lines.append("TAPIS 2")
+        lines.append(line("Cellule 4",          times.get("c4", 0.0)))
+        lines.append(line("Cellule 5",          times.get("c5", 0.0)))
+        lines.append(line("Cellule 6",          times.get("c6", 0.0)))
+        lines.append(line("Somme T2",           t2))
+        lines.append("")
+
+        lines.append("TRANSFERT 2 (T2→T3)")
+        lines.append(line("Transfer 2",         times.get("transfer2", 0.0)))
+        lines.append("")
+
+        lines.append("TAPIS 3")
+        lines.append(line("Cellule 7",          times.get("c7", 0.0)))
+        lines.append(line("Cellule 8",          times.get("c8", 0.0)))
+        lines.append(line("Cellule 9",          times.get("c9", 0.0)))
+        lines.append(line("Somme T3",           t3))
+        lines.append("")
+        total = (t1 or 0.0) + (t2 or 0.0) + (t3 or 0.0)
+        lines.append(line("TOTAL",              total))
+
+        win = tk.Toplevel(self)
+        win.title("Détails — Cellules, transferts, entrée")
+        bg = getattr(self, "BG", BG)
+        card = getattr(self, "CARD", CARD)
+        text_color = getattr(self, "TEXT", TEXT)
+        win.configure(bg=bg)
+        win.geometry("760x640")
+
+        box = scrolledtext.ScrolledText(
+            win,
+            wrap="word",
+            font=("Consolas", 11),
+            bg=card,
+            fg=text_color,
+            insertbackground=text_color,
+        )
+        box.pack(fill="both", expand=True, padx=12, pady=12)
+        box.insert("1.0", "\n".join(lines))
+        box.configure(state="disabled")
+
+
     def on_calculer(self):
         if self.animating or self.paused:
             self.on_reset()
@@ -885,6 +963,42 @@ class FourApp(tk.Tk):
             t2s_min=float(parts_minutes[1]),
             t3s_min=float(parts_minutes[2]),
         )
+        # ---- Détails segments: entrée / cellules / transferts ----
+        try:
+            weights = load_segment_weights()
+            t1, t2, t3 = self.last_calc["parts_reparties"]  # minutes par tapis (t1_min, t2_min, t3_min)
+            seg_times = compute_segment_times_minutes(t1, t2, t3, weights)
+            self.last_calc["segments"] = {"weights": weights, "times_min": seg_times}
+
+            # Marqueurs réalistes sur les barres (fin de chaque sous-segment sauf le dernier)
+            blk1 = [("entry1", seg_times.get("entry1", 0.0)),
+                    ("c1", seg_times.get("c1", 0.0)),
+                    ("c2", seg_times.get("c2", 0.0)),
+                    ("c3", seg_times.get("c3", 0.0))]
+            m1 = cumulative_markers_for_bar(blk1, t1)
+
+            blk2 = [("transfer1", seg_times.get("transfer1", 0.0)),
+                    ("c4", seg_times.get("c4", 0.0)),
+                    ("c5", seg_times.get("c5", 0.0)),
+                    ("c6", seg_times.get("c6", 0.0))]
+            m2 = cumulative_markers_for_bar(blk2, t2)
+
+            blk3 = [("transfer2", seg_times.get("transfer2", 0.0)),
+                    ("c7", seg_times.get("c7", 0.0)),
+                    ("c8", seg_times.get("c8", 0.0)),
+                    ("c9", seg_times.get("c9", 0.0))]
+            m3 = cumulative_markers_for_bar(blk3, t3)
+
+            try:
+                self.bars[0].set_markers(m1, [""] * len(m1))
+                self.bars[1].set_markers(m2, [""] * len(m2))
+                self.bars[2].set_markers(m3, [""] * len(m3))
+            except Exception:
+                # Si SegmentedBar n’accepte que 2 marqueurs, les 1/3-2/3 initiaux resteront en place.
+                pass
+        except Exception:
+            # En cas de souci de chargement JSON etc., on ne casse pas le calcul principal
+            pass
         for row, minutes, freq, hms in zip(self.stage_rows, parts_minutes, freq_display, (result.t1_hms, result.t2_hms, result.t3_hms)):
             row["time"].config(text=fmt_minutes(minutes))
             row["detail"].config(text=f"{minutes:.2f} min | {hms}")
@@ -1211,3 +1325,4 @@ def main() -> None:
 
 
 __all__ = ["FourApp", "main"]
+

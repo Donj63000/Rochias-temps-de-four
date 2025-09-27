@@ -1,12 +1,11 @@
-﻿"""Reusable Tkinter widgets tailored for the application."""
+"""Reusable Tkinter widgets tailored for the application."""
 
 from __future__ import annotations
 
-import math
 import tkinter as tk
 from tkinter import ttk
 
-from .theme import ACCENT, BG, BORDER, CARD, FILL, GLOW, HOLE, HOLE_BORDER, RED, SUBTEXT, TRACK
+from .theme import BG, BORDER, CARD, FILL, GLOW, HOLE, HOLE_BORDER, RED, SUBTEXT, TRACK
 
 
 class VScrollFrame(ttk.Frame):
@@ -63,29 +62,38 @@ class SegmentedBar(tk.Canvas):
             **kwargs,
         )
         self.height = height
-        self.total = 0.0
-        self.elapsed = 0.0
+        self.total_distance = 0.0
+        self.progress = 0.0
         self.show_ticks = True
         self._markers = [(1 / 3, "1/3"), (2 / 3, "2/3")]
-        self._cell_labels = []
-        self.holes = []  # liste de tuples (start_s, end_s) en secondes dans [0, total]
+        self._cell_labels: list[tuple[float, str]] = []
+        self.holes: list[tuple[float, float]] = []
         self.pad = 4
+        self._track = getattr(master, "TRACK", TRACK)
+        self._border = getattr(master, "BORDER", BORDER)
+        self._fill = getattr(master, "FILL", FILL)
+        self._hole_future = getattr(master, "HOLE", HOLE)
+        self._hole_past = getattr(master, "HOLE_BORDER", HOLE_BORDER)
         self.bind("<Configure>", lambda _event: self.redraw())
 
     def set_total_distance(self, distance: float):
-        self.total = max(0.0, float(distance))
-        self.elapsed = 0.0
+        self.total_distance = max(0.0, float(distance))
+        self.progress = 0.0
         self.redraw()
 
     set_total = set_total_distance
 
     def set_progress(self, seconds_elapsed: float):
-        self.elapsed = max(0.0, float(seconds_elapsed))
+        value = max(0.0, float(seconds_elapsed))
+        if self.total_distance > 0.0:
+            value = min(value, self.total_distance)
+        self.progress = value
         self.redraw()
 
     def reset(self):
-        self.total = 0.0
-        self.elapsed = 0.0
+        self.total_distance = 0.0
+        self.progress = 0.0
+        self.holes = []
         self.redraw()
 
     def set_markers(self, percentages, labels=None):
@@ -97,12 +105,12 @@ class SegmentedBar(tk.Canvas):
                 pct_float = float(pct)
             except (TypeError, ValueError):
                 continue
-            markers.append((pct_float, text))
+            markers.append((pct_float, str(text)))
         self._markers = markers
         self.redraw()
 
     def set_cell_labels(self, labels):
-        cells = []
+        cells: list[tuple[float, str]] = []
         for entry in labels:
             try:
                 pct, text = entry
@@ -114,52 +122,25 @@ class SegmentedBar(tk.Canvas):
         self.redraw()
 
     def set_holes(self, intervals):
-        # intervals: liste de (start_s, end_s); end_s peut être égal à start_s si l’arrêt vient de commencer
-        clean = []
-        for s, e in intervals or []:
+        limit = max(0.0, float(self.total_distance))
+        if not intervals or limit <= 0.0:
+            self.holes = []
+            self.redraw()
+            return
+        clamped: list[tuple[float, float]] = []
+        for entry in intervals:
             try:
-                s = float(s)
-                e = float(e)
+                a, b = entry
+                a = float(a)
+                b = float(b)
             except Exception:
                 continue
-            if e <= s:
-                # intervalle vide → ignore
-                continue
-            clean.append((s, e))
-        self.holes = clean
+            lo = max(0.0, min(limit, a))
+            hi = max(0.0, min(limit, b))
+            if hi - lo > 1e-6:
+                clamped.append((lo, hi))
+        self.holes = sorted(clamped, key=lambda item: (item[0], item[1]))
         self.redraw()
-
-    def _draw_gaps(self, track_left, track_right, track_top, track_bot, canvas_width):
-        if not self.holes or self.total <= 0:
-            return
-
-        cnv = self
-        pad = self.pad
-        x0 = max(track_left, pad)
-        x1 = min(track_right, canvas_width - pad)
-        y0 = track_top
-        y1 = track_bot
-        span = max(1.0, (x1 - x0))
-
-        prog_x = x0 + span * (max(0.0, min(self.elapsed, self.total)) / self.total)
-
-        for start_s, end_s in self.holes:
-            s = max(0.0, min(self.total, start_s))
-            e = max(0.0, min(self.total, end_s))
-            if e <= s:
-                continue
-
-            xs = x0 + span * (s / self.total)
-            xe = x0 + span * (e / self.total)
-
-            xs_fill = max(xs, x0)
-            xe_fill = min(xe, prog_x)
-            if xe_fill > xs_fill:
-                cnv.create_rectangle(xs_fill, y0, xe_fill, y1, fill=HOLE, width=0)
-
-            if xe > prog_x:
-                left = max(xs, prog_x)
-                cnv.create_rectangle(left, y0, xe, y1, outline=HOLE_BORDER, width=1)
 
     def redraw(self):
         width = self.winfo_width() or 120
@@ -172,13 +153,14 @@ class SegmentedBar(tk.Canvas):
         outer_top = max(0, radius - 14)
         outer_bot = min(base_height, radius + 14)
         offset = label_space
+
         self.create_rectangle(
             0,
             outer_top + offset,
             width,
             outer_bot + offset,
-            fill=BORDER,
-            outline=BORDER,
+            fill=self._border,
+            outline=self._border,
         )
 
         track_left = 4
@@ -190,31 +172,43 @@ class SegmentedBar(tk.Canvas):
             track_top,
             track_right,
             track_bot,
-            fill=TRACK,
-            outline=ACCENT,
+            fill=self._track,
+            outline=self._border,
             width=1,
         )
 
-        pct = 0.0 if self.total <= 1e-9 else min(1.0, self.elapsed / self.total)
-        inner_width = max(0, track_right - track_left)
-        fill_width = 0
-        if pct > 0.0 and inner_width > 0:
-            fill_width = max(1, min(inner_width, math.ceil(pct * inner_width)))
+        inner_width = max(0.0, track_right - track_left)
+        total = max(0.0, float(self.total_distance))
+        scale = inner_width / max(1e-6, total) if inner_width > 0 and total > 0.0 else 0.0
+        progress_sec = max(0.0, min(self.progress, total))
+        prog_x = track_left
+        if scale > 0.0:
+            prog_x = track_left + progress_sec * scale
+            prog_x = max(track_left, min(track_right, prog_x))
 
-        if fill_width > 0:
-            fill_right = min(track_right, track_left + fill_width)
-            self.create_rectangle(
-                track_left,
-                track_top,
-                fill_right,
-                track_bot,
-                fill=FILL,
-                outline=FILL,
-            )
-            self.create_line(track_left, track_top, fill_right, track_top, fill=GLOW, width=2)
+        if scale > 0.0:
+            for a, b in self.holes:
+                xa = track_left + a * scale
+                xb = track_left + b * scale
+                if xb <= prog_x:
+                    continue
+                x_left = max(prog_x, xa)
+                if xb - x_left > 0.5:
+                    self.create_rectangle(x_left, track_top, xb, track_bot, fill=self._hole_future, outline="")
 
-        if inner_width > 0:
-            self._draw_gaps(track_left, track_right, track_top, track_bot, width)
+        if prog_x - track_left > 0.5:
+            self.create_rectangle(track_left, track_top, prog_x, track_bot, fill=self._fill, outline="")
+            self.create_line(track_left, track_top, prog_x, track_top, fill=GLOW, width=2)
+
+        if scale > 0.0:
+            for a, b in self.holes:
+                xa = track_left + a * scale
+                xb = track_left + b * scale
+                if xa >= prog_x:
+                    continue
+                x_right = min(prog_x, xb)
+                if x_right - xa > 0.5:
+                    self.create_rectangle(xa, track_top, x_right, track_bot, fill=self._hole_past, outline="")
 
         if inner_width > 0 and self.show_ticks:
             for pct_value, text in self._markers:
@@ -245,8 +239,12 @@ class SegmentedBar(tk.Canvas):
 
     def refresh_theme(self):
         self.configure(bg=CARD)
+        self._track = getattr(self.master, "TRACK", TRACK)
+        self._border = getattr(self.master, "BORDER", BORDER)
+        self._fill = getattr(self.master, "FILL", FILL)
+        self._hole_future = getattr(self.master, "HOLE", HOLE)
+        self._hole_past = getattr(self.master, "HOLE_BORDER", HOLE_BORDER)
         self.redraw()
-
 
 class Tooltip:
     def __init__(self, widget, text):

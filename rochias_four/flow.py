@@ -2,90 +2,53 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 
 @dataclass
 class GapEvent:
-    """Evénement d'arrêt/reprise alimentation, temps en minutes de simulation."""
-
     start_min: float
-    end_min: Optional[float] = None  # None = encore à l'arrêt
+    end_min: Optional[float] = None
 
 
-def _hole_on_belt(
-    ev: GapEvent,
-    t_now_min: float,
-    belt_idx: int,
-    t1_min: float,
-    t2_min: float,
-    t3_min: float,
-    f1: float,
-    f2: float,
-    f3: float,
-    D1: float,
-    D2: float,
-    D3: float,
-) -> Optional[Tuple[float, float]]:
-    """Retourne l'intervalle [x0,x1] occupé par le trou sur le tapis demandé."""
+def _normalize(events: List[GapEvent], now_min: float) -> list[tuple[float, float]]:
+    norm: list[tuple[float, float]] = []
+    for ev in events:
+        s = float(ev.start_min)
+        e = float(now_min if ev.end_min is None else ev.end_min)
+        if e > s:
+            norm.append((s, e))
+    return norm
 
-    tjs = [t1_min, t2_min, t3_min]  # minutes
-    fs = [f1, f2, f3]  # Hz
-    Ds = [D1, D2, D3]  # « min·Hz »
-    cum_prev = sum(tjs[:belt_idx])  # décalage temporel amont (min)
-    tj = tjs[belt_idx]
-    fj = fs[belt_idx]
-    Dj = Ds[belt_idx]
 
-    s = ev.start_min
-    e = ev.end_min if ev.end_min is not None else t_now_min  # encore à l'arrêt → on prend « maintenant »
-
-    t_in_front = s + cum_prev
-    t_in_back = e + cum_prev
-    t_out_front = t_in_front + tj
-    t_out_back = t_in_back + tj
-
-    if t_now_min < t_in_front or t_now_min > t_out_back:
-        return None  # pas encore arrivé / déjà reparti
-
-    def _clip(value: float, lo: float = 0.0, hi: float = Dj) -> float:
-        return max(lo, min(hi, value))
-
-    x_front = _clip(fj * (t_now_min - t_in_front))
-    x_back = _clip(fj * (t_now_min - t_in_back))
-
-    if t_now_min < t_in_back:  # phase de croissance du trou
-        x0, x1 = 0.0, x_front
-    elif t_now_min <= t_out_front:  # deux bords présents (longueur constante = fj * (e - s))
-        x0, x1 = x_back, x_front
-    else:  # la tête est sortie, la queue reste
-        x0, x1 = x_back, Dj
-
-    if x1 - x0 <= 1e-6:
-        return None
-    return (x0, x1)
+def _project_to_belt(
+    intervals: list[tuple[float, float]],
+    now_min: float,
+    offset_min: float,
+    belt_len_sec: float,
+) -> list[tuple[float, float]]:
+    out: list[tuple[float, float]] = []
+    for s, e in intervals:
+        a = (now_min - (e + offset_min)) * 60.0
+        b = (now_min - (s + offset_min)) * 60.0
+        lo = max(0.0, min(belt_len_sec, a))
+        hi = max(0.0, min(belt_len_sec, b))
+        if hi - lo > 1e-6:
+            out.append((lo, hi))
+    return out
 
 
 def holes_for_all_belts(
     events: List[GapEvent],
-    t_now_min: float,
+    now_min: float,
     t1_min: float,
     t2_min: float,
     t3_min: float,
-    f1: float,
-    f2: float,
-    f3: float,
-    D1: float,
-    D2: float,
-    D3: float,
-) -> List[List[Tuple[float, float]]]:
-    """Calcule les intervalles de trous pour chaque tapis à l'instant donné."""
-
-    holes: List[List[Tuple[float, float]]] = [[], [], []]
-    for ev in events:
-        for belt in range(3):
-            seg = _hole_on_belt(ev, t_now_min, belt, t1_min, t2_min, t3_min, f1, f2, f3, D1, D2, D3)
-            if seg:
-                holes[belt].append(seg)
-    return holes
-
+) -> list[list[tuple[float, float]]]:
+    intervals = _normalize(events, now_min)
+    lens = [t1_min * 60.0, t2_min * 60.0, t3_min * 60.0]
+    offsets = [0.0, t1_min, t1_min + t2_min]
+    return [
+        _project_to_belt(intervals, now_min, offsets[i], lens[i])
+        for i in (0, 1, 2)
+    ]
