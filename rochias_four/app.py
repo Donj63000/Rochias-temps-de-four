@@ -11,7 +11,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, scrolledtext, ttk
 
-from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS, DISPLAY_Y_MAX_CM
+from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS, DISPLAY_Y_MAX_CM, SPEED_M_PER_S_PER_HZ
 from .cells import is_cell_visible, visible_cells_for_tapis
 from .calculations import thickness_and_accum
 from .curves import piecewise_curve_normalized
@@ -58,6 +58,8 @@ from .timeline import FeedTimeline
 from .geometry import build_line_geometry
 from .graphbar import GraphBar
 from .details_window import DetailsWindow
+from .ui.product_curve import ProductCurveWidget
+from .ui.theming import theme as current_plot_theme
 
 
 class FourApp(tk.Tk):
@@ -111,6 +113,11 @@ class FourApp(tk.Tk):
         self.logo_img = None
         self._error_after = None
         self.graph_bars: list[GraphBar] = []
+        self.product_curve_widget: ProductCurveWidget | None = None
+        self.product_curve_sections: list[dict] = []
+        self.product_curve_lengths: list[float] = []
+        self.product_curve_thicknesses: list[float] = []
+        self.product_curve_total_length = 0.0
         self._load_logo()
         self._build_ui()
         load_anchor_from_disk()
@@ -142,13 +149,15 @@ class FourApp(tk.Tk):
         b = round(b1 + (b2 - b1) * ratio)
         return f"#{max(0, min(255, r)):02X}{max(0, min(255, g)):02X}{max(0, min(255, b)):02X}"
 
-    def _graph_palette(self) -> tuple[str, str, str, str]:
-        colors = getattr(self.theme, "colors", {})
-        line = colors.get("success", BADGE_READY_FG)
-        face = colors.get("surface", CARD)
-        grid = colors.get("border", BORDER)
-        text = colors.get("fg_muted", SUBTEXT)
-        return line, face, grid, text
+    def _graph_palette(self) -> tuple[str, str, str, str, str, float]:
+        t = current_plot_theme()
+        line = t.curve or BADGE_READY_FG
+        face = t.surface or CARD
+        grid = t.grid or BORDER
+        text = t.text_muted or SUBTEXT
+        fill = t.curve_fill or line
+        alpha = float(t.curve_fill_alpha)
+        return line, face, grid, text, fill, alpha
 
     def _update_theme_palette(self):
         from . import theme as theme_constants
@@ -249,10 +258,10 @@ class FourApp(tk.Tk):
     def _refresh_graphbars_theme(self):
         if not getattr(self, "graph_bars", None):
             return
-        line, face, grid, text = self._graph_palette()
+        line, face, grid, text, fill, alpha = self._graph_palette()
         for graph in self.graph_bars:
             try:
-                graph.apply_theme(line, face, grid, text, DISPLAY_Y_MAX_CM)
+                graph.apply_theme(line, face, grid, text, fill, alpha, DISPLAY_Y_MAX_CM)
             except Exception:
                 pass
 
@@ -269,6 +278,129 @@ class FourApp(tk.Tk):
                 graph.update(t_now_min, self.feed_timeline)
             except Exception:
                 pass
+        if not self.animating:
+            self._update_product_curve()
+
+    def _update_product_curve(self, head_x: float | None = None):
+        if not self.product_curve_widget:
+            return
+        if not self.product_curve_lengths or not self.product_curve_thicknesses:
+            self.product_curve_widget.update(0.0, [1.0], [0.0], y_max_cm=DISPLAY_Y_MAX_CM)
+            return
+        target = self.product_curve_total_length if self.product_curve_total_length > 0 else sum(self.product_curve_lengths)
+        head = max(0.0, min(head_x if head_x is not None else 0.0, target))
+        self.product_curve_widget.update(
+            head,
+            self.product_curve_lengths,
+            self.product_curve_thicknesses,
+            y_max_cm=DISPLAY_Y_MAX_CM,
+        )
+
+    def _normalized_weights(self, profile, count: int) -> list[float]:
+        if count <= 0:
+            return []
+        if not profile or len(profile) != count:
+            weights = [1.0] * count
+        else:
+            weights = [float(val) for val in profile[:count]]
+        total = sum(weights) or 1.0
+        return [val / total for val in weights]
+
+    def _build_product_curve_data(
+        self,
+        seg_times: dict[str, float],
+        h1_cm: float,
+        h2_cm: float,
+        h3_cm: float,
+        cells_belt1: list[int],
+        cells_belt2: list[int],
+        cells_belt3: list[int],
+    ) -> None:
+        sections: list[dict] = []
+        lengths: list[float] = []
+        thicknesses: list[float] = []
+
+        def _add_cells(cells: list[int], belt_index: int, h_start: float, h_end: float, profile) -> None:
+            if not cells:
+                return
+            weights = self._normalized_weights(profile, len(cells))
+            acc = 0.0
+            delta = float(h_end) - float(h_start)
+            speed_hz = self.seg_speeds[belt_index] if belt_index < len(self.seg_speeds) else 0.0
+            speed_mps = max(0.0, float(speed_hz)) * SPEED_M_PER_S_PER_HZ
+            for idx, cell_id in enumerate(cells):
+                weight = weights[idx] if idx < len(weights) else 0.0
+                acc += weight
+                cell_height = float(h_start) + delta * acc if delta else float(h_start)
+                duration_min = float(seg_times.get(f"c{cell_id}", 0.0))
+                duration_s = max(0.0, duration_min * 60.0)
+                length_m = duration_s * speed_mps
+                sections.append(
+                    {
+                        "length": length_m,
+                        "thickness": cell_height,
+                        "duration": duration_s,
+                        "belt_index": belt_index,
+                    }
+                )
+                lengths.append(length_m)
+                thicknesses.append(cell_height)
+
+        _add_cells(cells_belt1, 0, h1_cm, h1_cm, [1.0] * len(cells_belt1))
+        _add_cells(cells_belt2, 1, h1_cm, h2_cm, CELL_PROFILE_2)
+        _add_cells(cells_belt3, 2, h2_cm, h3_cm, CELL_PROFILE_3)
+
+        cleaned_sections: list[dict] = []
+        cleaned_lengths: list[float] = []
+        cleaned_thicknesses: list[float] = []
+        for sec, length, thick in zip(sections, lengths, thicknesses):
+            if length <= 0.0:
+                continue
+            cleaned_sections.append(sec)
+            cleaned_lengths.append(length)
+            cleaned_thicknesses.append(thick)
+
+        if cleaned_sections:
+            self.product_curve_sections = cleaned_sections
+            self.product_curve_lengths = cleaned_lengths
+            self.product_curve_thicknesses = cleaned_thicknesses
+            self.product_curve_total_length = sum(cleaned_lengths)
+            if self.product_curve_widget:
+                self.product_curve_widget.set_total_length(self.product_curve_total_length)
+        else:
+            self.product_curve_sections = []
+            self.product_curve_lengths = []
+            self.product_curve_thicknesses = []
+            self.product_curve_total_length = 0.0
+            if self.product_curve_widget:
+                self.product_curve_widget.set_total_length(1.0)
+        self._update_product_curve(0.0)
+
+    def _current_head_position(self, seg_index: int, elapsed_in_seg: float) -> float:
+        if not self.product_curve_sections:
+            return 0.0
+        head = 0.0
+        remaining = float(max(0.0, elapsed_in_seg))
+        for sec in self.product_curve_sections:
+            belt_idx = int(sec.get("belt_index", 0))
+            length = float(sec.get("length", 0.0))
+            duration = float(sec.get("duration", 0.0))
+            if belt_idx < seg_index:
+                head += max(0.0, length)
+                continue
+            if belt_idx > seg_index:
+                break
+            if duration <= 0.0:
+                head += max(0.0, length)
+                continue
+            if remaining <= 0.0:
+                break
+            frac = max(0.0, min(1.0, remaining / duration))
+            head += max(0.0, length) * frac
+            remaining -= duration
+            if remaining <= 0.0:
+                break
+        return min(head, self.product_curve_total_length)
     def _sync_theme_attributes(self):
         palette = getattr(self, "_palette", {})
         for key, value in palette.items():
@@ -719,6 +851,10 @@ class FourApp(tk.Tk):
         pcard = self._card(body.inner, fill="x", expand=False, padx=18, pady=8, padding=(24, 20))
         self.bars_heading_label = ttk.Label(pcard, text="Barres de chargement — Référence maintenance (L/v)", style="CardHeading.TLabel")
         self.bars_heading_label.pack(anchor="w", pady=(0, 12))
+        ttk.Label(pcard, text="Courbe de couche produit (temps réel)", style="Card.TLabel").pack(anchor="w")
+        self.product_curve_widget = ProductCurveWidget(pcard, total_length_m=1.0, y_max_cm=DISPLAY_Y_MAX_CM)
+        self.theme.register_axes(self.product_curve_widget.ax)
+        self.product_curve_widget.pack(fill="x", expand=False, pady=(6, 12))
         self.bars = []
         self.graph_bars = []
         self.bar_texts = []
@@ -739,7 +875,7 @@ class FourApp(tk.Tk):
             if i > 0:
                 accum_lbl.pack(side="left", padx=(8, 0))
             self.accum_badges.append(accum_lbl if i > 0 else None)
-            g_line, g_face, g_grid, g_text = self._graph_palette()
+            g_line, g_face, g_grid, g_text, g_fill, g_alpha = self._graph_palette()
             graph = GraphBar(
                 holder,
                 y_max=DISPLAY_Y_MAX_CM,
@@ -748,8 +884,11 @@ class FourApp(tk.Tk):
                 face_color=g_face,
                 grid_color=g_grid,
                 text_color=g_text,
+                fill_color=g_fill,
+                fill_alpha=g_alpha,
             )
             graph.pack(fill="x", expand=True, pady=(8, 6))
+            self.theme.register_axes(graph.ax)
             self.graph_bars.append(graph)
             bar = SegmentedBar(holder, height=30)
             bar.pack(fill="x", expand=True, pady=(8, 4))
@@ -967,6 +1106,7 @@ class FourApp(tk.Tk):
         self.btn_pause.config(state="disabled", text="⏸ Pause")
         self.btn_calculer.config(state="normal")
         self._update_graphs(0.0)
+        self._update_product_curve(0.0)
         self.seg_durations = [0.0, 0.0, 0.0]
         self.seg_distances = [0.0, 0.0, 0.0]
         self.seg_speeds = [0.0, 0.0, 0.0]
@@ -1221,6 +1361,7 @@ class FourApp(tk.Tk):
             except Exception:
                 pass
         self._apply_graph_geometry(seg_times, th["h1_cm"], th["h2_cm"], th["h3_cm"])
+        self._build_product_curve_data(seg_times, th["h1_cm"], th["h2_cm"], th["h3_cm"], cells_belt1, cells_belt2, cells_belt3)
         def _badge_style(pct: float) -> str:
             if pct > 0.5:
                 return "BadgeActive.TLabel"
@@ -1391,6 +1532,8 @@ class FourApp(tk.Tk):
         clamped_elapsed = min(elapsed, dur)
         t_now_min = (sum(self.seg_durations[: self.seg_idx]) + clamped_elapsed) / 60.0
         self._update_graphs(t_now_min)
+        head_pos = self._current_head_position(self.seg_idx, clamped_elapsed)
+        self._update_product_curve(head_pos)
         remaining_current = max(0.0, dur - elapsed)
         remaining_future = sum(self.seg_durations[j] for j in range(i + 1, 3))
         total_remaining = max(0.0, remaining_current + remaining_future)
@@ -1417,6 +1560,7 @@ class FourApp(tk.Tk):
                 self.feed_on = True
                 self.btn_feed_stop.config(state="disabled")
                 self.btn_feed_resume.config(state="disabled")
+                self._update_product_curve(self.product_curve_total_length)
                 return
             self.seg_start = now
             j = self.seg_idx
@@ -1427,6 +1571,7 @@ class FourApp(tk.Tk):
             self._set_stage_status(j, "active")
             if j + 1 < 3:
                 self._set_stage_status(j + 1, "ready")
+            self._update_product_curve(self._current_head_position(self.seg_idx, 0.0))
             self._schedule_tick()
             return
         pct = max(0.0, min(1.0, clamped_elapsed / dur)) * 100.0

@@ -9,11 +9,13 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Sequence
 
+from .ui.theming import apply_theme as apply_plot_theme, theme as current_plot_theme
+
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".rochias_four")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "theme.json")
 
 DEFAULT_THEME = "blanc"
-THEME_SEQUENCE: tuple[str, ...] = ("blanc", "vert", "sombre", "rouge")
+THEME_SEQUENCE: tuple[str, ...] = ("blanc", "vert", "sombre", "orange", "rouge")
 
 THEME_PRESETS: dict[str, dict[str, object]] = {
     "blanc": {
@@ -72,6 +74,20 @@ THEME_PRESETS: dict[str, dict[str, object]] = {
         "warn": "#991b1b",
         "is_dark": False,
     },
+    "orange": {
+        "bg": "#2A1E17",
+        "surface": "#3A2820",
+        "panel": "#241A14",
+        "fg": "#FDEAD7",
+        "fg_muted": "#F3C8A6",
+        "accent": "#FF8C00",
+        "accent_fg": "#2A1E17",
+        "border": "#5C4033",
+        "grid": "#6B4D3B",
+        "success": "#27AE60",
+        "warn": "#E74C3C",
+        "is_dark": True,
+    },
 }
 
 THEME_ALIASES = {
@@ -84,6 +100,15 @@ THEME_ALIASES = {
     "gris": "sombre",
     "dark_rouge": "sombre",
     "red": "rouge",
+    "orange": "orange",
+}
+
+PLOT_THEME_MAP = {
+    "blanc": "light",
+    "vert": "light",
+    "sombre": "dark",
+    "rouge": "orange",
+    "orange": "orange",
 }
 
 STYLE_NAMES = {
@@ -132,6 +157,9 @@ class ThemeManager:
             pass
         self.current = DEFAULT_THEME
         self.colors = dict(THEME_PRESETS[DEFAULT_THEME])
+        self._plot_theme_name = None
+        self._matplotlib_axes: set = set()
+        apply_plot_theme(PLOT_THEME_MAP.get(self.current, "dark"))
 
     def save(self):
         os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -164,6 +192,10 @@ class ThemeManager:
         self.current = canonical
         self.colors = dict(THEME_PRESETS[canonical])
         c = self.colors
+        plot_name = PLOT_THEME_MAP.get(canonical, canonical)
+        if plot_name != self._plot_theme_name:
+            apply_plot_theme(plot_name)
+            self._plot_theme_name = plot_name
 
         try:
             self.root.configure(bg=c["bg"])
@@ -252,36 +284,87 @@ class ThemeManager:
         self.style.configure("TNotebook.Tab", background=c["panel"], foreground=c["fg"])
 
         self.save()
+        self.refresh_registered_axes()
 
     def apply_matplotlib(self, fig_or_axes):
         """Apply the current theme to matplotlib figures or axes."""
-        c = self.colors
         try:
             import matplotlib  # noqa: F401
             import matplotlib.pyplot as plt  # noqa: F401
         except Exception:
             return
-
-        def _style_axes(ax):
-            ax.set_facecolor(c["surface"])
-            ax.tick_params(colors=c["fg_muted"])
-            if ax.title:
-                ax.title.set_color(c["fg"])
-            if ax.xaxis.label:
-                ax.xaxis.label.set_color(c["fg"])
-            if ax.yaxis.label:
-                ax.yaxis.label.set_color(c["fg"])
-            for spine in ax.spines.values():
-                spine.set_color(c["border"])
-            ax.grid(True, color=c["grid"], linestyle=":", linewidth=0.8, alpha=0.7)
-
         if hasattr(fig_or_axes, "axes"):
             fig = fig_or_axes
-            fig.patch.set_facecolor(c["bg"])
             for ax in fig.axes:
-                _style_axes(ax)
+                self.register_axes(ax)
         else:
-            ax = fig_or_axes
-            if ax.figure:
-                ax.figure.patch.set_facecolor(c["bg"])
-            _style_axes(ax)
+            self.register_axes(fig_or_axes)
+
+    def register_axes(self, ax):
+        if ax is None:
+            return
+        self._matplotlib_axes.add(ax)
+        self._apply_axes_theme(ax)
+
+    def refresh_registered_axes(self):
+        for ax in list(self._matplotlib_axes):
+            if ax is None:
+                self._matplotlib_axes.discard(ax)
+                continue
+            self._apply_axes_theme(ax)
+
+    def _apply_axes_theme(self, ax):
+        try:
+            t = current_plot_theme()
+        except Exception:
+            return
+        if getattr(ax, "figure", None):
+            try:
+                ax.figure.set_facecolor(t.surface)
+                ax.figure.patch.set_facecolor(t.surface)
+            except Exception:
+                pass
+        try:
+            ax.set_facecolor(t.surface)
+        except Exception:
+            pass
+        try:
+            for spine in ax.spines.values():
+                spine.set_color(t.stroke)
+        except Exception:
+            pass
+        try:
+            ax.tick_params(colors=t.text_muted)
+        except Exception:
+            pass
+        try:
+            ax.grid(True, color=t.grid, alpha=0.35)
+        except Exception:
+            pass
+        try:
+            ax.set_xlabel(ax.get_xlabel(), color=t.text)
+            ax.set_ylabel(ax.get_ylabel(), color=t.text)
+        except Exception:
+            pass
+        try:
+            if ax.title:
+                ax.title.set_color(t.text)
+        except Exception:
+            pass
+        line = getattr(ax, "_product_line", None)
+        if line is not None:
+            try:
+                line.set_color(t.curve)
+            except Exception:
+                pass
+        fill = getattr(ax, "_product_fill", None)
+        if fill is not None:
+            try:
+                fill.set_color(t.curve_fill)
+                fill.set_alpha(t.curve_fill_alpha)
+            except Exception:
+                pass
+        try:
+            ax.figure.canvas.draw_idle()
+        except Exception:
+            pass
