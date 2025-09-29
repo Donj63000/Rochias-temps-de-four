@@ -11,7 +11,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, scrolledtext, ttk
 
-from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS, DISPLAY_Y_MAX_CM, RAMP_DURATION_MIN
+from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS, DISPLAY_Y_MAX_CM
 from .cells import is_cell_visible, visible_cells_for_tapis
 from .calculations import thickness_and_accum
 from .curves import piecewise_curve_normalized
@@ -54,6 +54,9 @@ from .theme_manager import ThemeManager, STYLE_NAMES, THEME_SEQUENCE
 from .utils import fmt_hms, fmt_minutes
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
 from .graphs import CELL_PROFILE_2, CELL_PROFILE_3, GraphWindow
+from .timeline import FeedTimeline
+from .geometry import build_line_geometry
+from .graphbar import GraphBar
 from .details_window import DetailsWindow
 
 
@@ -81,6 +84,7 @@ class FourApp(tk.Tk):
         self.compact_mode = False
         self.feed_events: list[GapEvent] = []
         self.feed_on = True
+        self.feed_timeline = FeedTimeline()
         self.fill_alpha = 0.0
         self.accum_badges: list[ttk.Label | None] = []
         self.bars_heading_label: ttk.Label | None = None
@@ -106,6 +110,7 @@ class FourApp(tk.Tk):
         self.operator_mode = True
         self.logo_img = None
         self._error_after = None
+        self.graph_bars: list[GraphBar] = []
         self._load_logo()
         self._build_ui()
         load_anchor_from_disk()
@@ -136,6 +141,14 @@ class FourApp(tk.Tk):
         g = round(g1 + (g2 - g1) * ratio)
         b = round(b1 + (b2 - b1) * ratio)
         return f"#{max(0, min(255, r)):02X}{max(0, min(255, g)):02X}{max(0, min(255, b)):02X}"
+
+    def _graph_palette(self) -> tuple[str, str, str, str]:
+        colors = getattr(self.theme, "colors", {})
+        line = colors.get("success", BADGE_READY_FG)
+        face = colors.get("surface", CARD)
+        grid = colors.get("border", BORDER)
+        text = colors.get("fg_muted", SUBTEXT)
+        return line, face, grid, text
 
     def _update_theme_palette(self):
         from . import theme as theme_constants
@@ -232,6 +245,30 @@ class FourApp(tk.Tk):
             setattr(theme_constants, key, value)
             if key in module_globals:
                 module_globals[key] = value
+
+    def _refresh_graphbars_theme(self):
+        if not getattr(self, "graph_bars", None):
+            return
+        line, face, grid, text = self._graph_palette()
+        for graph in self.graph_bars:
+            try:
+                graph.apply_theme(line, face, grid, text, DISPLAY_Y_MAX_CM)
+            except Exception:
+                pass
+
+    def _update_graphs(self, t_now_min: float) -> None:
+        alpha = self.feed_timeline.alpha_at(t_now_min)
+        self.fill_alpha = alpha
+        for bar in getattr(self, "bars", []):
+            try:
+                bar.set_curve_alpha(alpha)
+            except Exception:
+                pass
+        for graph in getattr(self, "graph_bars", []):
+            try:
+                graph.update(t_now_min, self.feed_timeline)
+            except Exception:
+                pass
     def _sync_theme_attributes(self):
         palette = getattr(self, "_palette", {})
         for key, value in palette.items():
@@ -277,6 +314,7 @@ class FourApp(tk.Tk):
                     bar.redraw()
             except Exception:
                 pass
+        self._refresh_graphbars_theme()
         for window in self.winfo_children():
             if isinstance(window, tk.Toplevel):
                 try:
@@ -682,6 +720,7 @@ class FourApp(tk.Tk):
         self.bars_heading_label = ttk.Label(pcard, text="Barres de chargement — Référence maintenance (L/v)", style="CardHeading.TLabel")
         self.bars_heading_label.pack(anchor="w", pady=(0, 12))
         self.bars = []
+        self.graph_bars = []
         self.bar_texts = []
         self.bar_duration_labels = []
         self.stage_status = []
@@ -700,6 +739,18 @@ class FourApp(tk.Tk):
             if i > 0:
                 accum_lbl.pack(side="left", padx=(8, 0))
             self.accum_badges.append(accum_lbl if i > 0 else None)
+            g_line, g_face, g_grid, g_text = self._graph_palette()
+            graph = GraphBar(
+                holder,
+                y_max=DISPLAY_Y_MAX_CM,
+                height_px=120,
+                line_color=g_line,
+                face_color=g_face,
+                grid_color=g_grid,
+                text_color=g_text,
+            )
+            graph.pack(fill="x", expand=True, pady=(8, 6))
+            self.graph_bars.append(graph)
             bar = SegmentedBar(holder, height=30)
             bar.pack(fill="x", expand=True, pady=(8, 4))
             bar.set_markers([1 / 3, 2 / 3], ["", ""])
@@ -859,6 +910,22 @@ class FourApp(tk.Tk):
         self._update_kpi("t3", fmt_minutes(parts[2]), f"{parts[2]:.2f} min | {fmt_hms(parts[2] * 60)}")
         self._update_bar_targets()
 
+    def _apply_graph_geometry(self, seg_times: dict[str, float], h1: float, h2: float, h3: float) -> None:
+        if not getattr(self, "graph_bars", None):
+            return
+        geometry_map = build_line_geometry(seg_times or {}, h1, h2, h3)
+        for idx, key in enumerate(("t1", "t2", "t3")):
+            graph = self.graph_bars[idx] if idx < len(self.graph_bars) else None
+            if graph is None:
+                continue
+            geo = geometry_map.get(key)
+            if geo is None:
+                graph.clear()
+            else:
+                geom, offset = geo
+                graph.set_geometry(geom, offset)
+        self._update_graphs(0.0)
+
     def on_reset(self):
         self._cancel_after()
         self.animating = False
@@ -886,6 +953,7 @@ class FourApp(tk.Tk):
                 pass
         self.feed_events.clear()
         self.feed_on = True
+        self.feed_timeline.reset(0.0, 0.0, 0)
         self.fill_alpha = 0.0
         if hasattr(self, "btn_feed_stop"):
             self.btn_feed_stop.config(state="disabled")
@@ -898,6 +966,7 @@ class FourApp(tk.Tk):
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="disabled", text="⏸ Pause")
         self.btn_calculer.config(state="normal")
+        self._update_graphs(0.0)
         self.seg_durations = [0.0, 0.0, 0.0]
         self.seg_distances = [0.0, 0.0, 0.0]
         self.seg_speeds = [0.0, 0.0, 0.0]
@@ -1015,6 +1084,7 @@ class FourApp(tk.Tk):
         else:
             self._cancel_after()
         self._clear_error()
+        self.feed_timeline.reset(0.0, 0.0, 0)
         try:
             raw1 = (self.e1.get() or "").strip()
             raw2 = (self.e2.get() or "").strip()
@@ -1060,6 +1130,7 @@ class FourApp(tk.Tk):
                 lbl.config(text="")
             except Exception:
                 pass
+        seg_times: dict[str, float] = {}
         try:
             weights = load_segment_weights()
             t1, t2, t3 = self.last_calc["parts_reparties"]  # minutes par tapis (t1_min, t2_min, t3_min)
@@ -1149,6 +1220,7 @@ class FourApp(tk.Tk):
                 bar.set_curve_alpha(self.fill_alpha)
             except Exception:
                 pass
+        self._apply_graph_geometry(seg_times, th["h1_cm"], th["h2_cm"], th["h3_cm"])
         def _badge_style(pct: float) -> str:
             if pct > 0.5:
                 return "BadgeActive.TLabel"
@@ -1219,6 +1291,7 @@ class FourApp(tk.Tk):
         self.btn_calculer.config(state="disabled")
         self.feed_events.clear()
         self.feed_on = True
+        self.feed_timeline.reset(0.0, 0.0, 1)
         self.fill_alpha = 0.0
         self.btn_feed_stop.config(state="normal")
         self.btn_feed_resume.config(state="disabled")
@@ -1228,6 +1301,7 @@ class FourApp(tk.Tk):
                 bar.set_curve_alpha(self.fill_alpha)
             except Exception:
                 pass
+        self._update_graphs(0.0)
         self._set_stage_status(0, "active")
         self._set_stage_status(1, "ready")
         self._set_stage_status(2, "idle")
@@ -1282,9 +1356,11 @@ class FourApp(tk.Tk):
         tnow = self._sim_minutes()
         self.feed_events.append(GapEvent(start_min=tnow))
         self.feed_on = False
+        self.feed_timeline.set_target(0, tnow)
         self.btn_feed_stop.config(state="disabled")
         self.btn_feed_resume.config(state="normal")
         self.toast("Arrêt alimentation enregistré")
+        self._update_graphs(tnow)
 
     def on_feed_resume(self):
         if not self.animating:
@@ -1297,9 +1373,11 @@ class FourApp(tk.Tk):
                 ev.end_min = tnow
                 break
         self.feed_on = True
+        self.feed_timeline.set_target(1, tnow)
         self.btn_feed_stop.config(state="normal")
         self.btn_feed_resume.config(state="disabled")
         self.toast("Reprise alimentation enregistrée")
+        self._update_graphs(tnow)
 
     def _tick(self):
         if not self.animating or self.paused:
@@ -1308,27 +1386,19 @@ class FourApp(tk.Tk):
         dur = max(1e-6, self.seg_durations[i])
         vitesse = self.seg_speeds[i]
         now = time.perf_counter()
-        elapsed = now - self.seg_start
+        elapsed_raw = now - self.seg_start
+        elapsed = max(0.0, elapsed_raw)
+        clamped_elapsed = min(elapsed, dur)
+        t_now_min = (sum(self.seg_durations[: self.seg_idx]) + clamped_elapsed) / 60.0
+        self._update_graphs(t_now_min)
         remaining_current = max(0.0, dur - elapsed)
         remaining_future = sum(self.seg_durations[j] for j in range(i + 1, 3))
         total_remaining = max(0.0, remaining_current + remaining_future)
         if not self.notified_exit and self.total_duration > 5 * 60 and total_remaining <= 5 * 60:
             self.notified_exit = True
             self.toast("Le produit va sortir du four (≤ 5 min)")
-        ramp_target = 1.0 if self.feed_on else 0.0
-        ramp_minutes = max(1e-6, float(RAMP_DURATION_MIN))
-        delta_alpha = (float(TICK_SECONDS) / 60.0) / ramp_minutes
-        if self.fill_alpha < ramp_target:
-            self.fill_alpha = min(ramp_target, self.fill_alpha + delta_alpha)
-        elif self.fill_alpha > ramp_target:
-            self.fill_alpha = max(ramp_target, self.fill_alpha - delta_alpha)
-        for bar in self.bars:
-            try:
-                bar.set_curve_alpha(self.fill_alpha)
-            except Exception:
-                pass
         if elapsed >= dur:
-            elapsed = dur
+            clamped_elapsed = dur
             self.bars[i].set_progress(dur)
             self.bar_texts[i].config(text=f"100% | vitesse {vitesse:.2f} Hz | {fmt_hms(dur)} / {fmt_hms(dur)} | terminé")
             if i == 0 and not self.notified_stage1:
@@ -1359,11 +1429,10 @@ class FourApp(tk.Tk):
                 self._set_stage_status(j + 1, "ready")
             self._schedule_tick()
             return
-        pct = max(0.0, min(1.0, elapsed / dur)) * 100.0
-        self.bars[i].set_progress(elapsed)
-        self.bar_texts[i].config(text=f"{pct:5.1f}% | vitesse {vitesse:.2f} Hz | {fmt_hms(elapsed)} / {fmt_hms(dur)} | en cours")
+        pct = max(0.0, min(1.0, clamped_elapsed / dur)) * 100.0
+        self.bars[i].set_progress(clamped_elapsed)
+        self.bar_texts[i].config(text=f"{pct:5.1f}% | vitesse {vitesse:.2f} Hz | {fmt_hms(clamped_elapsed)} / {fmt_hms(dur)} | en cours")
         try:
-            t_now_min = (sum(self.seg_durations[: self.seg_idx]) + max(0.0, elapsed)) / 60.0
             t1m = self.seg_durations[0] / 60.0
             t2m = self.seg_durations[1] / 60.0
             t3m = self.seg_durations[2] / 60.0
