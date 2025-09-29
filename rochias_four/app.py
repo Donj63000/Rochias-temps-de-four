@@ -11,9 +11,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, scrolledtext, ttk
 
-from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS
+from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS, DISPLAY_Y_MAX_CM, RAMP_DURATION_MIN
 from .cells import is_cell_visible, visible_cells_for_tapis
 from .calculations import thickness_and_accum
+from .curves import piecewise_curve_normalized
 from .maintenance_ref import compute_times_maintenance
 from .calibration_overrides import load_anchor_from_disk
 from .flow import GapEvent, holes_for_all_belts
@@ -52,7 +53,7 @@ from .theme import (
 from .theme_manager import ThemeManager, STYLE_NAMES, THEME_SEQUENCE
 from .utils import fmt_hms, fmt_minutes
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
-from .graphs import GraphWindow
+from .graphs import CELL_PROFILE_2, CELL_PROFILE_3, GraphWindow
 from .details_window import DetailsWindow
 
 
@@ -80,6 +81,7 @@ class FourApp(tk.Tk):
         self.compact_mode = False
         self.feed_events: list[GapEvent] = []
         self.feed_on = True
+        self.fill_alpha = 0.0
         self.accum_badges: list[ttk.Label | None] = []
         self.bars_heading_label: ttk.Label | None = None
         self._init_styles()
@@ -681,11 +683,14 @@ class FourApp(tk.Tk):
         self.bars_heading_label.pack(anchor="w", pady=(0, 12))
         self.bars = []
         self.bar_texts = []
+        self.bar_duration_labels = []
         self.stage_status = []
         self.accum_badges = []
         for i in range(3):
             holder = ttk.Frame(pcard, style="CardInner.TFrame")
             holder.pack(fill="x", pady=10)
+            setattr(holder, "DISPLAY_Y_MAX_CM", DISPLAY_Y_MAX_CM)
+            setattr(holder, "CURVE_COLOR", BADGE_READY_FG)
             title_row = ttk.Frame(holder, style="CardInner.TFrame")
             title_row.pack(fill="x")
             ttk.Label(title_row, text=f"Tapis {i + 1}", style="Card.TLabel").pack(side="left")
@@ -708,9 +713,12 @@ class FourApp(tk.Tk):
                 bar.set_cell_labels([])
             txt = ttk.Label(holder, text="En attente", style="Status.TLabel", anchor="w", wraplength=860)
             txt.pack(anchor="w")
+            detail_lbl = ttk.Label(holder, text="", style="Mono.TLabel", anchor="w", wraplength=860)
+            detail_lbl.pack(anchor="w", pady=(2, 0))
             self.stage_status.append(status_lbl)
             self.bars.append(bar)
             self.bar_texts.append(txt)
+            self.bar_duration_labels.append(detail_lbl)
         top = ttk.Frame(body.inner, style="TFrame")
         top.pack(fill="x", expand=False, padx=18, pady=6)
         card_in = self._card(top, side="left", fill="both", expand=True, padx=(0, 0))
@@ -864,14 +872,21 @@ class FourApp(tk.Tk):
             t.config(text="En attente")
             try:
                 b.set_holes([])
+                b.set_curve_alpha(0.0)
             except Exception:
                 pass
         for row in self.stage_rows:
             row["freq"].config(text="-- Hz")
             row["time"].config(text="--")
             row["detail"].config(text="--")
+        for lbl in getattr(self, "bar_duration_labels", []):
+            try:
+                lbl.config(text="")
+            except Exception:
+                pass
         self.feed_events.clear()
         self.feed_on = True
+        self.fill_alpha = 0.0
         if hasattr(self, "btn_feed_stop"):
             self.btn_feed_stop.config(state="disabled")
         if hasattr(self, "btn_feed_resume"):
@@ -1040,11 +1055,37 @@ class FourApp(tk.Tk):
             t3s_min=float(parts_minutes[2]),
         )
         # ---- Détails segments: entrée / cellules / transferts ----
+        for lbl in getattr(self, "bar_duration_labels", []):
+            try:
+                lbl.config(text="")
+            except Exception:
+                pass
         try:
             weights = load_segment_weights()
             t1, t2, t3 = self.last_calc["parts_reparties"]  # minutes par tapis (t1_min, t2_min, t3_min)
             seg_times = compute_segment_times_minutes(t1, t2, t3, weights)
             self.last_calc["segments"] = {"weights": weights, "times_min": seg_times}
+
+            def _fmt_min(val: float) -> str:
+                return f"{val:.2f} min"
+            try:
+                if self.bar_duration_labels:
+                    parts = [f"Entrée : {_fmt_min(seg_times.get('entry1', 0.0))}"]
+                    for cell_id in cells_belt1:
+                        parts.append(f"Cellule {cell_id} : {_fmt_min(seg_times.get(f'c{cell_id}', 0.0))}")
+                    self.bar_duration_labels[0].config(text="  |  ".join(parts))
+                if len(self.bar_duration_labels) > 1:
+                    parts = [f"Transfert 1 : {_fmt_min(seg_times.get('transfer1', 0.0))}"]
+                    for cell_id in cells_belt2:
+                        parts.append(f"Cellule {cell_id} : {_fmt_min(seg_times.get(f'c{cell_id}', 0.0))}")
+                    self.bar_duration_labels[1].config(text="  |  ".join(parts))
+                if len(self.bar_duration_labels) > 2:
+                    parts = [f"Transfert 2 : {_fmt_min(seg_times.get('transfer2', 0.0))}"]
+                    for cell_id in cells_belt3:
+                        parts.append(f"Cellule {cell_id} : {_fmt_min(seg_times.get(f'c{cell_id}', 0.0))}")
+                    self.bar_duration_labels[2].config(text="  |  ".join(parts))
+            except Exception:
+                pass
 
             # Marqueurs réalistes sur les barres (fin de chaque sous-segment sauf le dernier)
             blk1 = [("entry1", seg_times.get("entry1", 0.0)),
@@ -1053,16 +1094,14 @@ class FourApp(tk.Tk):
                     ("c3", seg_times.get("c3", 0.0))]
             m1 = cumulative_markers_for_bar(blk1, t1)
 
-            blk2 = [("transfer1", seg_times.get("transfer1", 0.0)),
-                    ("c4", seg_times.get("c4", 0.0)),
-                    ("c5", seg_times.get("c5", 0.0)),
-                    ("c6", seg_times.get("c6", 0.0))]
+            blk2 = []
+            for cell_id in visible_cells_for_tapis(2):
+                blk2.append((f"c{cell_id}", seg_times.get(f"c{cell_id}", 0.0)))
             m2 = cumulative_markers_for_bar(blk2, t2)
 
-            blk3 = [("transfer2", seg_times.get("transfer2", 0.0))]
-            for cell_id in (7, 8, 9):
-                if is_cell_visible(cell_id):
-                    blk3.append((f"c{cell_id}", seg_times.get(f"c{cell_id}", 0.0)))
+            blk3 = []
+            for cell_id in visible_cells_for_tapis(3):
+                blk3.append((f"c{cell_id}", seg_times.get(f"c{cell_id}", 0.0)))
             m3 = cumulative_markers_for_bar(blk3, t3)
 
             try:
@@ -1091,6 +1130,25 @@ class FourApp(tk.Tk):
         except Exception:
             h0_cm = 2.0
         th = thickness_and_accum(self.seg_speeds[0], self.seg_speeds[1], self.seg_speeds[2], h0_cm)
+        cells_belt1 = visible_cells_for_tapis(1)
+        cells_belt2 = visible_cells_for_tapis(2)
+        cells_belt3 = visible_cells_for_tapis(3)
+        n1 = max(1, len(cells_belt1))
+        n2 = max(1, len(cells_belt2))
+        n3 = max(1, len(cells_belt3))
+        profile1 = [1.0] * n1
+        profile2 = list(CELL_PROFILE_2) if len(CELL_PROFILE_2) == n2 else [1.0] * n2
+        profile3 = [0.55, 0.45] if n3 == 2 else (list(CELL_PROFILE_3) if len(CELL_PROFILE_3) == n3 else [1.0] * n3)
+        curve1 = piecewise_curve_normalized(th["h1_cm"], th["h1_cm"], n1, profile1)
+        curve2 = piecewise_curve_normalized(th["h1_cm"], th["h2_cm"], n2, profile2)
+        curve3 = piecewise_curve_normalized(th["h2_cm"], th["h3_cm"], n3, profile3)
+        self.fill_alpha = 0.0
+        for bar, curve in zip(self.bars, (curve1, curve2, curve3)):
+            try:
+                bar.set_curve(curve, y_max_cm=DISPLAY_Y_MAX_CM)
+                bar.set_curve_alpha(self.fill_alpha)
+            except Exception:
+                pass
         def _badge_style(pct: float) -> str:
             if pct > 0.5:
                 return "BadgeActive.TLabel"
@@ -1161,11 +1219,13 @@ class FourApp(tk.Tk):
         self.btn_calculer.config(state="disabled")
         self.feed_events.clear()
         self.feed_on = True
+        self.fill_alpha = 0.0
         self.btn_feed_stop.config(state="normal")
         self.btn_feed_resume.config(state="disabled")
         for bar in self.bars:
             try:
                 bar.set_holes([])
+                bar.set_curve_alpha(self.fill_alpha)
             except Exception:
                 pass
         self._set_stage_status(0, "active")
@@ -1255,6 +1315,18 @@ class FourApp(tk.Tk):
         if not self.notified_exit and self.total_duration > 5 * 60 and total_remaining <= 5 * 60:
             self.notified_exit = True
             self.toast("Le produit va sortir du four (≤ 5 min)")
+        ramp_target = 1.0 if self.feed_on else 0.0
+        ramp_minutes = max(1e-6, float(RAMP_DURATION_MIN))
+        delta_alpha = (float(TICK_SECONDS) / 60.0) / ramp_minutes
+        if self.fill_alpha < ramp_target:
+            self.fill_alpha = min(ramp_target, self.fill_alpha + delta_alpha)
+        elif self.fill_alpha > ramp_target:
+            self.fill_alpha = max(ramp_target, self.fill_alpha - delta_alpha)
+        for bar in self.bars:
+            try:
+                bar.set_curve_alpha(self.fill_alpha)
+            except Exception:
+                pass
         if elapsed >= dur:
             elapsed = dur
             self.bars[i].set_progress(dur)
@@ -1310,6 +1382,7 @@ class FourApp(tk.Tk):
                     pass
         except Exception:
             pass
+
         self._schedule_tick()
 
     def export_csv(self):

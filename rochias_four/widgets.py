@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from . import theme
+from .config import DISPLAY_Y_MAX_CM
 
 
 class VScrollFrame(ttk.Frame):
@@ -78,6 +79,10 @@ class SegmentedBar(tk.Canvas):
         self._glow = getattr(master, "GLOW", theme.GLOW)
         self._red = getattr(master, "RED", theme.RED)
         self._subtext = getattr(master, "SUBTEXT", theme.SUBTEXT)
+        self.curve_points: list[tuple[float, float]] = []
+        self.curve_alpha = 0.0
+        self.y_max_cm = getattr(master, "DISPLAY_Y_MAX_CM", DISPLAY_Y_MAX_CM)
+        self._curve_color = getattr(master, "CURVE_COLOR", getattr(theme, "BADGE_READY_FG", "#15803d"))
         self.bind("<Configure>", lambda _event: self.redraw())
 
     def set_total_distance(self, distance: float):
@@ -125,6 +130,29 @@ class SegmentedBar(tk.Canvas):
         self._cell_labels = cells
         self.redraw()
 
+    def set_curve(self, points, *, y_max_cm=None):
+        pts: list[tuple[float, float]] = []
+        for entry in points or []:
+            try:
+                x_val, y_val = entry
+                xf = float(x_val)
+                yf = float(y_val)
+            except Exception:
+                continue
+            pts.append((max(0.0, min(1.0, xf)), float(yf)))
+        pts.sort(key=lambda item: item[0])
+        self.curve_points = pts
+        if y_max_cm is not None:
+            try:
+                self.y_max_cm = max(0.1, float(y_max_cm))
+            except Exception:
+                pass
+        self.redraw()
+
+    def set_curve_alpha(self, alpha: float):
+        self.curve_alpha = max(0.0, min(1.0, float(alpha)))
+        self.redraw()
+
     def set_holes(self, intervals):
         limit = max(0.0, float(self.total_distance))
         if not intervals or limit <= 0.0:
@@ -152,6 +180,7 @@ class SegmentedBar(tk.Canvas):
         self.delete("all")
 
         label_space = 18 if self._cell_labels else 0
+        axis_space = 34
         base_height = max(4, height - label_space)
         radius = base_height // 2
         outer_top = max(0, radius - 14)
@@ -167,8 +196,8 @@ class SegmentedBar(tk.Canvas):
             outline=self._border,
         )
 
-        track_left = 4
-        track_right = max(track_left, width - 4)
+        track_left = axis_space + self.pad
+        track_right = max(track_left + 1, width - self.pad)
         track_top = max(outer_top + 2, radius - 10) + offset
         track_bot = min(outer_bot - 2, radius + 10) + offset
         self.create_rectangle(
@@ -189,6 +218,30 @@ class SegmentedBar(tk.Canvas):
         if scale > 0.0:
             prog_x = track_left + progress_sec * scale
             prog_x = max(track_left, min(track_right, prog_x))
+
+        axis_line_x = max(self.pad + 2, track_left - 10)
+        axis_tick_end = max(axis_line_x, track_left - 2)
+        axis_label_x = axis_line_x - 6
+        axis_height = max(2.0, track_bot - track_top)
+        max_cm = max(0.1, float(self.y_max_cm))
+        self.create_line(axis_line_x, track_top, axis_line_x, track_bot, fill=self._subtext)
+        tick_values = (
+            (0.0, 0.0),
+            (0.5, max_cm / 2.0),
+            (1.0, max_cm),
+        )
+        for frac, value in tick_values:
+            y = track_bot - frac * axis_height
+            label = f"{value:.0f}" if max_cm >= 10 else f"{value:.1f}"
+            self.create_line(axis_line_x, y, axis_tick_end, y, fill=self._subtext)
+            self.create_text(
+                axis_label_x,
+                y,
+                text=label,
+                anchor="e",
+                fill=self._subtext,
+                font=("Consolas", 9),
+            )
 
         if scale > 0.0:
             for a, b in self.holes:
@@ -213,6 +266,18 @@ class SegmentedBar(tk.Canvas):
                 x_right = min(prog_x, xb)
                 if x_right - xa > 0.5:
                     self.create_rectangle(xa, track_top, x_right, track_bot, fill=self._hole_past, outline="")
+
+        if inner_width > 0 and self.curve_points:
+            pts: list[float] = []
+            height_scale = (track_bot - track_top) / max_cm
+            alpha = float(self.curve_alpha)
+            for x_rel, y_cm in self.curve_points:
+                x_px = track_left + max(0.0, min(1.0, x_rel)) * inner_width
+                scaled = min(max_cm, max(0.0, y_cm)) * alpha
+                y_px = track_bot - scaled * height_scale
+                pts.extend((x_px, y_px))
+            if len(pts) >= 4:
+                self.create_line(*pts, fill=self._curve_color, width=2, smooth=True)
 
         if inner_width > 0 and self.show_ticks:
             for pct_value, text in self._markers:
@@ -251,6 +316,8 @@ class SegmentedBar(tk.Canvas):
         self._glow = getattr(self.master, "GLOW", theme.GLOW)
         self._red = getattr(self.master, "RED", theme.RED)
         self._subtext = getattr(self.master, "SUBTEXT", theme.SUBTEXT)
+        self._curve_color = getattr(self.master, "CURVE_COLOR", getattr(theme, "BADGE_READY_FG", "#15803d"))
+        self.y_max_cm = getattr(self.master, "DISPLAY_Y_MAX_CM", self.y_max_cm)
         self.redraw()
 
 class Tooltip:
@@ -333,3 +400,4 @@ __all__ = [
     "Tooltip",
     "VScrollFrame",
 ]
+
