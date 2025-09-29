@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, scrolledtext, ttk
 
 from .config import DEFAULT_INPUTS, PREFS_PATH, TICK_SECONDS
+from .cells import is_cell_visible, visible_cells_for_tapis
 from .calculations import thickness_and_accum
 from .maintenance_ref import compute_times_maintenance
 from .calibration_overrides import load_anchor_from_disk
@@ -697,9 +698,14 @@ class FourApp(tk.Tk):
             bar = SegmentedBar(holder, height=30)
             bar.pack(fill="x", expand=True, pady=(8, 4))
             bar.set_markers([1 / 3, 2 / 3], ["", ""])
-            first_cell = (i * 3) + 1
-            cell_labels = [((2 * j + 1) / 6, f"Cellule {first_cell + j}") for j in range(3)]
-            bar.set_cell_labels(cell_labels)
+            visible_cells = visible_cells_for_tapis(i + 1)
+            count_visible = len(visible_cells)
+            if count_visible:
+                positions = [((2 * idx + 1) / (2 * count_visible), f"Cellule {cell_id}")
+                             for idx, cell_id in enumerate(visible_cells)]
+                bar.set_cell_labels(positions)
+            else:
+                bar.set_cell_labels([])
             txt = ttk.Label(holder, text="En attente", style="Status.TLabel", anchor="w", wraplength=860)
             txt.pack(anchor="w")
             self.stage_status.append(status_lbl)
@@ -960,9 +966,8 @@ class FourApp(tk.Tk):
         lines.append("")
 
         lines.append("TAPIS 3")
-        lines.append(line("Cellule 7",          times.get("c7", 0.0)))
-        lines.append(line("Cellule 8",          times.get("c8", 0.0)))
-        lines.append(line("Cellule 9",          times.get("c9", 0.0)))
+        for cell_id in visible_cells_for_tapis(3):
+            lines.append(line(f"Cellule {cell_id}",          times.get(f"c{cell_id}", 0.0)))
         lines.append(line("Somme T3",           t3))
         lines.append("")
         total = (t1 or 0.0) + (t2 or 0.0) + (t3 or 0.0)
@@ -1054,10 +1059,10 @@ class FourApp(tk.Tk):
                     ("c6", seg_times.get("c6", 0.0))]
             m2 = cumulative_markers_for_bar(blk2, t2)
 
-            blk3 = [("transfer2", seg_times.get("transfer2", 0.0)),
-                    ("c7", seg_times.get("c7", 0.0)),
-                    ("c8", seg_times.get("c8", 0.0)),
-                    ("c9", seg_times.get("c9", 0.0))]
+            blk3 = [("transfer2", seg_times.get("transfer2", 0.0))]
+            for cell_id in (7, 8, 9):
+                if is_cell_visible(cell_id):
+                    blk3.append((f"c{cell_id}", seg_times.get(f"c{cell_id}", 0.0)))
             m3 = cumulative_markers_for_bar(blk3, t3)
 
             try:
