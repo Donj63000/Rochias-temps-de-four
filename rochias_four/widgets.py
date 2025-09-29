@@ -5,7 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from .theme import BG, BORDER, CARD, FILL, GLOW, HOLE, HOLE_BORDER, RED, SUBTEXT, TRACK
+from . import theme
 
 
 class VScrollFrame(ttk.Frame):
@@ -13,7 +13,8 @@ class VScrollFrame(ttk.Frame):
 
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
-        self.canvas = tk.Canvas(self, highlightthickness=0, bg=BG, bd=0)
+        bg = getattr(master, "BG", theme.BG)
+        self.canvas = tk.Canvas(self, highlightthickness=0, bg=bg, bd=0)
         self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.vsb.set)
         self.vsb.pack(side="right", fill="y")
@@ -30,7 +31,7 @@ class VScrollFrame(ttk.Frame):
         self.canvas.bind_all("<Button-5>", self._on_mousewheel, add="+")
 
     def refresh_theme(self):
-        self.canvas.configure(bg=BG)
+        self.canvas.configure(bg=getattr(self.master, "BG", theme.BG))
         try:
             self.inner.configure(style="TFrame")
         except Exception:
@@ -55,7 +56,7 @@ class SegmentedBar(tk.Canvas):
     def __init__(self, master, height=22, **kwargs):
         super().__init__(
             master,
-            bg=CARD,
+            bg=getattr(master, "CARD", theme.CARD),
             highlightthickness=0,
             bd=0,
             height=height,
@@ -69,11 +70,14 @@ class SegmentedBar(tk.Canvas):
         self._cell_labels: list[tuple[float, str]] = []
         self.holes: list[tuple[float, float]] = []
         self.pad = 4
-        self._track = getattr(master, "TRACK", TRACK)
-        self._border = getattr(master, "BORDER", BORDER)
-        self._fill = getattr(master, "FILL", FILL)
-        self._hole_future = getattr(master, "HOLE", HOLE)
-        self._hole_past = getattr(master, "HOLE_BORDER", HOLE_BORDER)
+        self._track = getattr(master, "TRACK", theme.TRACK)
+        self._border = getattr(master, "BORDER", theme.BORDER)
+        self._fill = getattr(master, "FILL", theme.FILL)
+        self._hole_future = getattr(master, "HOLE", theme.HOLE)
+        self._hole_past = getattr(master, "HOLE_BORDER", theme.HOLE_BORDER)
+        self._glow = getattr(master, "GLOW", theme.GLOW)
+        self._red = getattr(master, "RED", theme.RED)
+        self._subtext = getattr(master, "SUBTEXT", theme.SUBTEXT)
         self.bind("<Configure>", lambda _event: self.redraw())
 
     def set_total_distance(self, distance: float):
@@ -198,7 +202,7 @@ class SegmentedBar(tk.Canvas):
 
         if prog_x - track_left > 0.5:
             self.create_rectangle(track_left, track_top, prog_x, track_bot, fill=self._fill, outline="")
-            self.create_line(track_left, track_top, prog_x, track_top, fill=GLOW, width=2)
+            self.create_line(track_left, track_top, prog_x, track_top, fill=self._glow, width=2)
 
         if scale > 0.0:
             for a, b in self.holes:
@@ -213,14 +217,14 @@ class SegmentedBar(tk.Canvas):
         if inner_width > 0 and self.show_ticks:
             for pct_value, text in self._markers:
                 x_pos = track_left + max(0.0, min(1.0, pct_value)) * inner_width
-                self.create_line(int(x_pos), track_top, int(x_pos), track_bot, fill=RED, width=2)
+                self.create_line(int(x_pos), track_top, int(x_pos), track_bot, fill=self._red, width=2)
                 if text:
                     self.create_text(
                         int(x_pos) + 2,
                         track_top - 6,
                         text=text,
                         anchor="w",
-                        fill=SUBTEXT,
+                        fill=self._subtext,
                         font=("Consolas", 9),
                     )
 
@@ -233,17 +237,20 @@ class SegmentedBar(tk.Canvas):
                     label_y,
                     text=text,
                     anchor="s",
-                    fill=SUBTEXT,
+                    fill=self._subtext,
                     font=("Segoe UI Semibold", 9),
                 )
 
     def refresh_theme(self):
-        self.configure(bg=CARD)
-        self._track = getattr(self.master, "TRACK", TRACK)
-        self._border = getattr(self.master, "BORDER", BORDER)
-        self._fill = getattr(self.master, "FILL", FILL)
-        self._hole_future = getattr(self.master, "HOLE", HOLE)
-        self._hole_past = getattr(self.master, "HOLE_BORDER", HOLE_BORDER)
+        self.configure(bg=getattr(self.master, "CARD", theme.CARD))
+        self._track = getattr(self.master, "TRACK", theme.TRACK)
+        self._border = getattr(self.master, "BORDER", theme.BORDER)
+        self._fill = getattr(self.master, "FILL", theme.FILL)
+        self._hole_future = getattr(self.master, "HOLE", theme.HOLE)
+        self._hole_past = getattr(self.master, "HOLE_BORDER", theme.HOLE_BORDER)
+        self._glow = getattr(self.master, "GLOW", theme.GLOW)
+        self._red = getattr(self.master, "RED", theme.RED)
+        self._subtext = getattr(self.master, "SUBTEXT", theme.SUBTEXT)
         self.redraw()
 
 class Tooltip:
@@ -263,7 +270,10 @@ class Tooltip:
             tip.attributes("-alpha", 0.95)
         except Exception:
             pass
-        tk.Label(tip, text=self.text, bg="#111111", fg="#ffffff", font=("Segoe UI", 9), padx=8, pady=4).pack()
+        bg = getattr(self.widget, "TOOLTIP_BG", getattr(self.widget.master, "TOOLTIP_BG", theme.TOOLTIP_BG))
+        fg = getattr(self.widget, "TOOLTIP_FG", getattr(self.widget.master, "TOOLTIP_FG", theme.TOOLTIP_FG))
+        tip.configure(bg=bg)
+        tk.Label(tip, text=self.text, bg=bg, fg=fg, font=("Segoe UI", 9), padx=8, pady=4).pack()
         tip.update_idletasks()
         x_pos = self.widget.winfo_rootx() + 12
         y_pos = self.widget.winfo_rooty() + self.widget.winfo_height() + 6

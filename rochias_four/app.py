@@ -25,18 +25,30 @@ from .theme import (
     ACCENT,
     ACCENT_DISABLED,
     ACCENT_HOVER,
+    ACCENT_SOFT_BG,
+    ACCENT_SOFT_BG_HOVER,
+    ACCENT_SOFT_FG,
+    BADGE_NEUTRAL_BG,
+    BADGE_READY_BG,
+    BADGE_READY_FG,
+    BADGE_IDLE_FG,
     BG,
     BORDER,
     CARD,
+    DISABLED_BG,
+    DISABLED_FG,
     FIELD,
     FIELD_FOCUS,
     GLOW,
+    HERO_BG,
+    HERO_DETAIL_FG,
+    MONO_FG,
     SECONDARY,
     SECONDARY_HOVER,
     SUBTEXT,
     TEXT,
 )
-from .theme_manager import ThemeManager, STYLE_NAMES
+from .theme_manager import ThemeManager, STYLE_NAMES, THEME_SEQUENCE
 from .utils import fmt_hms, fmt_minutes
 from .widgets import Collapsible, SegmentedBar, Tooltip, VScrollFrame
 from .graphs import GraphWindow
@@ -55,7 +67,7 @@ class FourApp(tk.Tk):
                     pass
         super().__init__()
         self.theme = ThemeManager(self)
-        self.theme.load_saved_or("light")
+        self.theme.load_saved_or(THEME_SEQUENCE[0])
         self._update_theme_palette()
         self._sync_theme_attributes()
         self.title("Four • 3 Tapis — Référence maintenance (L/v)")
@@ -126,12 +138,50 @@ class FourApp(tk.Tk):
         from . import theme as theme_constants
         colors = self.theme.colors
         blend = self._blend_colors
+        tint = lambda base, color, ratio: blend(base, color, ratio)
         lighten = lambda c, amount: blend(c, "#FFFFFF", amount)
         darken = lambda c, amount: blend(c, "#000000", amount)
         secondary = blend(colors["panel"], colors["surface"], 0.5)
         track = blend(colors["panel"], colors["bg"], 0.5)
-        accent_hover = darken(colors["accent"], 0.2) if self.theme.current == "light" else lighten(colors["accent"], 0.2)
-        secondary_hover_target = colors["surface"] if self.theme.current == "dark_rouge" else colors["bg"]
+        is_dark = bool(colors.get("is_dark", False))
+        accent_hover = lighten(colors["accent"], 0.2) if is_dark else darken(colors["accent"], 0.2)
+        secondary_hover_target = colors["surface"] if is_dark else colors["bg"]
+
+        if is_dark:
+            accent_soft = tint(colors["surface"], colors["accent"], 0.18)
+            accent_soft_hover = tint(colors["surface"], colors["accent"], 0.28)
+            warn_soft = tint(colors["surface"], colors["warn"], 0.24)
+            warn_soft_hover = tint(colors["surface"], colors["warn"], 0.34)
+            success_soft = tint(colors["surface"], colors["success"], 0.26)
+            success_soft_hover = tint(colors["surface"], colors["success"], 0.36)
+            neutral_soft = tint(colors["surface"], secondary, 0.4)
+            disabled_bg = tint(colors["surface"], colors["bg"], 0.55)
+            disabled_fg = tint(colors["fg_muted"], colors["bg"], 0.45)
+            hero_bg = tint(colors["surface"], colors["accent"], 0.16)
+            hero_detail_fg = tint(colors["fg_muted"], hero_bg, 0.35)
+            tooltip_bg = tint(colors["surface"], colors["fg"], 0.6)
+            tooltip_fg = colors["fg"]
+            accent_soft_fg = colors["accent"]
+            badge_ready_fg = colors["success"]
+            badge_idle_fg = colors["fg"]
+        else:
+            accent_soft = tint(colors["bg"], colors["accent"], 0.14)
+            accent_soft_hover = tint(colors["bg"], colors["accent"], 0.24)
+            warn_soft = tint(colors["bg"], colors["warn"], 0.22)
+            warn_soft_hover = tint(colors["bg"], colors["warn"], 0.32)
+            success_soft = tint(colors["bg"], colors["success"], 0.26)
+            success_soft_hover = tint(colors["bg"], colors["success"], 0.36)
+            neutral_soft = tint(colors["bg"], secondary, 0.38)
+            disabled_bg = tint(colors["bg"], colors["panel"], 0.35)
+            disabled_fg = tint(colors["fg_muted"], colors["bg"], 0.65)
+            hero_bg = tint(colors["bg"], colors["accent"], 0.18)
+            hero_detail_fg = tint(colors["fg_muted"], hero_bg, 0.4)
+            tooltip_bg = tint(colors["bg"], colors["accent"], 0.32)
+            tooltip_fg = "#ffffff"
+            accent_soft_fg = colors["accent"]
+            badge_ready_fg = colors["success"]
+            badge_idle_fg = colors["fg_muted"]
+
         palette = {
             "BG": colors["bg"],
             "CARD": colors["surface"],
@@ -149,15 +199,36 @@ class FourApp(tk.Tk):
             "FILL": colors["accent"],
             "TRACK": track,
             "GLOW": lighten(colors["accent"], 0.45),
+            "ACCENT_SOFT_BG": accent_soft,
+            "ACCENT_SOFT_BG_HOVER": accent_soft_hover,
+            "ACCENT_SOFT_FG": accent_soft_fg,
+            "WARN_SOFT_BG": warn_soft,
+            "WARN_SOFT_BG_HOVER": warn_soft_hover,
+            "SUCCESS_SOFT_BG": success_soft,
+            "SUCCESS_SOFT_BG_HOVER": success_soft_hover,
+            "NEUTRAL_SOFT_BG": neutral_soft,
+            "DISABLED_BG": disabled_bg,
+            "DISABLED_FG": disabled_fg,
+            "MONO_FG": blend(colors["fg"], colors["accent"], 0.35),
+            "HERO_BG": hero_bg,
+            "HERO_DETAIL_FG": hero_detail_fg,
+            "TOOLTIP_BG": tooltip_bg,
+            "TOOLTIP_FG": tooltip_fg,
+            "BADGE_READY_BG": success_soft,
+            "BADGE_READY_FG": badge_ready_fg,
+            "BADGE_NEUTRAL_BG": neutral_soft,
+            "BADGE_IDLE_FG": badge_idle_fg,
 
-            # <<< ICI : jauni les “trous”
-            "HOLE": "#FACC15",         # jaune (500) — rempli sur la partie passée
-            "HOLE_BORDER": "#A16207",  # jaune foncé — liseré sur la partie future
+            # <<< ICI : jauni les "trous"
+            "HOLE": "#FACC15",         # jaune (500) -- rempli sur la partie pass?e
+            "HOLE_BORDER": "#A16207",  # jaune fonc? -- liser? sur la partie future
         }
         self._palette = palette
+        module_globals = globals()
         for key, value in palette.items():
             setattr(theme_constants, key, value)
-
+            if key in module_globals:
+                module_globals[key] = value
     def _sync_theme_attributes(self):
         palette = getattr(self, "_palette", {})
         for key, value in palette.items():
@@ -171,7 +242,7 @@ class FourApp(tk.Tk):
         self.option_add("*Entry.selectForeground", "#ffffff")
 
     def on_toggle_theme(self):
-        self.theme.toggle(("light", "dark_rouge"))
+        self.theme.toggle(THEME_SEQUENCE)
         try:
             self.refresh_after_theme_change()
         except Exception:
@@ -398,7 +469,7 @@ class FourApp(tk.Tk):
         style.configure("TableHead.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI Semibold", 11))
         style.configure("Big.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI", 20, "bold"))
         style.configure("Result.TLabel", background=CARD, foreground=ACCENT, font=("Segoe UI", 22, "bold"))
-        style.configure("Mono.TLabel", background=CARD, foreground="#3b7e63", font=("Consolas", 11))
+        style.configure("Mono.TLabel", background=CARD, foreground=MONO_FG, font=("Consolas", 11))
         style.configure("Status.TLabel", background=CARD, foreground=SUBTEXT, font=("Consolas", 11))
         style.configure("Footer.TLabel", background=BG, foreground=SUBTEXT, font=("Segoe UI", 10))
         style.configure("Dark.TSeparator", background=BORDER)
@@ -409,10 +480,10 @@ class FourApp(tk.Tk):
         style.configure("StatDetail.TLabel", background=SECONDARY, foreground=SUBTEXT, font=("Consolas", 11))
         style.configure("ParamName.TLabel", background=CARD, foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
         style.configure("ParamValue.TLabel", background=CARD, foreground=TEXT, font=("Consolas", 11))
-        style.configure("HeroStat.TFrame", background="#ecfdf5", relief="flat")
-        style.configure("HeroStatValue.TLabel", background="#ecfdf5", foreground=ACCENT, font=("Segoe UI", 22, "bold"))
-        style.configure("HeroStatLabel.TLabel", background="#ecfdf5", foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
-        style.configure("HeroStatDetail.TLabel", background="#ecfdf5", foreground=SUBTEXT, font=("Segoe UI", 10))
+        style.configure("HeroStat.TFrame", background=HERO_BG, relief="flat")
+        style.configure("HeroStatValue.TLabel", background=HERO_BG, foreground=ACCENT, font=("Segoe UI", 22, "bold"))
+        style.configure("HeroStatLabel.TLabel", background=HERO_BG, foreground=SUBTEXT, font=("Segoe UI Semibold", 10))
+        style.configure("HeroStatDetail.TLabel", background=HERO_BG, foreground=HERO_DETAIL_FG, font=("Segoe UI", 10))
         style.configure("Logo.TLabel", background=CARD)
         style.configure("StageRow.TFrame", background=CARD)
         style.configure("StageTitle.TLabel", background=CARD, foreground=TEXT, font=("Segoe UI Semibold", 12))
@@ -432,7 +503,7 @@ class FourApp(tk.Tk):
         style.map(
             "Accent.TButton",
             background=[("active", ACCENT_HOVER), ("disabled", ACCENT_DISABLED)],
-            foreground=[("disabled", "#0f5132")],
+            foreground=[("disabled", DISABLED_FG)],
         )
         style.configure(
             "Ghost.TButton",
@@ -446,13 +517,13 @@ class FourApp(tk.Tk):
         )
         style.map(
             "Ghost.TButton",
-            background=[("active", SECONDARY_HOVER), ("disabled", "#edf6f0")],
-            foreground=[("disabled", "#7c8f82")],
+            background=[("active", SECONDARY_HOVER), ("disabled", DISABLED_BG)],
+            foreground=[("disabled", DISABLED_FG)],
         )
         style.configure(
             "Chip.TButton",
-            background="#f0fdf4",
-            foreground=ACCENT,
+            background=ACCENT_SOFT_BG,
+            foreground=ACCENT_SOFT_FG,
             padding=(12, 6),
             borderwidth=0,
             focusthickness=0,
@@ -461,8 +532,8 @@ class FourApp(tk.Tk):
         )
         style.map(
             "Chip.TButton",
-            background=[("active", "#dcfce7"), ("disabled", "#f0f1ef")],
-            foreground=[("disabled", "#7c8f82")],
+            background=[("active", ACCENT_SOFT_BG_HOVER), ("disabled", DISABLED_BG)],
+            foreground=[("disabled", DISABLED_FG)],
         )
         style.configure(
             "Dark.TEntry",
@@ -505,15 +576,15 @@ class FourApp(tk.Tk):
         style.map(
             "Accent.TRadiobutton",
             indicatorcolor=[("selected", ACCENT), ("!selected", BORDER)],
-            foreground=[("disabled", "#7c8f82")],
+            foreground=[("disabled", DISABLED_FG)],
         )
         badge_font = ("Segoe UI Semibold", 10)
-        style.configure("BadgeIdle.TLabel", background=SECONDARY, foreground=SUBTEXT, font=badge_font, padding=(10, 2))
-        style.configure("BadgeReady.TLabel", background="#bbf7d0", foreground=ACCENT, font=badge_font, padding=(10, 2))
+        style.configure("BadgeIdle.TLabel", background=SECONDARY, foreground=BADGE_IDLE_FG, font=badge_font, padding=(10, 2))
+        style.configure("BadgeReady.TLabel", background=BADGE_READY_BG, foreground=BADGE_READY_FG, font=badge_font, padding=(10, 2))
         style.configure("BadgeActive.TLabel", background=ACCENT, foreground="#ffffff", font=badge_font, padding=(10, 2))
         style.configure("BadgeDone.TLabel", background=ACCENT_HOVER, foreground="#ffffff", font=badge_font, padding=(10, 2))
         style.configure("BadgePause.TLabel", background=ACCENT_DISABLED, foreground=TEXT, font=badge_font, padding=(10, 2))
-        style.configure("BadgeNeutral.TLabel", background="#d1eddb", foreground=TEXT, font=badge_font, padding=(10, 2))
+        style.configure("BadgeNeutral.TLabel", background=BADGE_NEUTRAL_BG, foreground=TEXT, font=badge_font, padding=(10, 2))
         self.style = style
 
     def _load_logo(self):
