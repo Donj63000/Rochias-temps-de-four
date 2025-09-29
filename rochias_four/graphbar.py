@@ -19,6 +19,8 @@ class _Style:
     face_color: str
     grid_color: str
     text_color: str
+    fill_color: str
+    fill_alpha: float
 
 
 class GraphBar:
@@ -34,8 +36,11 @@ class GraphBar:
         face_color: str = "#ffffff",
         grid_color: str = "#d4d4d8",
         text_color: str = "#52525b",
+        fill_color: str | None = None,
+        fill_alpha: float = 0.25,
     ) -> None:
-        self._style = _Style(line_color, face_color, grid_color, text_color)
+        fill = fill_color if fill_color is not None else line_color
+        self._style = _Style(line_color, face_color, grid_color, text_color, fill, float(fill_alpha))
         self._y_max = float(y_max)
         figsize = (6.4, max(1.0, height_px / 96.0))
         self.figure = Figure(figsize=figsize, dpi=96)
@@ -46,6 +51,7 @@ class GraphBar:
         self._offset_min: float = 0.0
         self._last_y: List[float] = []
         self._ticks = []
+        self._fill = None
         self._setup_axes(self._y_max)
 
     def _setup_axes(self, y_max: float) -> None:
@@ -66,7 +72,31 @@ class GraphBar:
         x_values = self._geometry.samples_x if self._geometry else []
         if not self._last_y:
             self._last_y = [0.0 for _ in x_values]
-        self._line, = self.ax.plot(x_values, self._last_y, linewidth=2.0, color=self._style.line_color, solid_joinstyle="round")
+        self._line, = self.ax.plot(
+            x_values,
+            self._last_y,
+            linewidth=2.0,
+            color=self._style.line_color,
+            solid_joinstyle="round",
+            zorder=3,
+        )
+        if self._fill is not None:
+            try:
+                self._fill.remove()
+            except Exception:
+                pass
+        self._fill = None
+        if x_values:
+            self._fill = self.ax.fill_between(
+                x_values,
+                self._last_y,
+                0.0,
+                color=self._style.fill_color,
+                alpha=self._style.fill_alpha,
+                zorder=2,
+            )
+        self.ax._product_line = self._line
+        self.ax._product_fill = self._fill
         if self._geometry is not None:
             for pos in self._geometry.ticks_x:
                 tick = self.ax.axvline(pos, color=self._style.grid_color, linewidth=1.0, alpha=0.4)
@@ -102,10 +132,36 @@ class GraphBar:
         alphas = [timeline.alpha_at(t_now_min - (self._offset_min + tau)) for tau in geometry.tau_min]
         self._last_y = [max(0.0, min(self._y_max, alpha * target)) for alpha, target in zip(alphas, geometry.h_target_cm)]
         self._line.set_data(geometry.samples_x, self._last_y)
+        if self._fill is not None:
+            try:
+                self._fill.remove()
+            except Exception:
+                pass
+        if geometry.samples_x:
+            self._fill = self.ax.fill_between(
+                geometry.samples_x,
+                self._last_y,
+                0.0,
+                color=self._style.fill_color,
+                alpha=self._style.fill_alpha,
+                zorder=2,
+            )
+        else:
+            self._fill = None
+        self.ax._product_fill = self._fill
         self.canvas.draw_idle()
 
-    def apply_theme(self, line_color: str, face_color: str, grid_color: str, text_color: str, y_max: float) -> None:
-        self._style = _Style(line_color, face_color, grid_color, text_color)
+    def apply_theme(
+        self,
+        line_color: str,
+        face_color: str,
+        grid_color: str,
+        text_color: str,
+        fill_color: str,
+        fill_alpha: float,
+        y_max: float,
+    ) -> None:
+        self._style = _Style(line_color, face_color, grid_color, text_color, fill_color, float(fill_alpha))
         self._y_max = float(y_max)
         self._setup_axes(self._y_max)
 
