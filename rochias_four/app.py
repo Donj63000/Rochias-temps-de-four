@@ -1580,17 +1580,10 @@ class FourApp(tk.Tk):
             t1m = self.seg_durations[0] / 60.0
             t2m = self.seg_durations[1] / 60.0
             t3m = self.seg_durations[2] / 60.0
-            D1, D2, D3 = self.seg_distances
-            f1, f2, f3 = self.seg_speeds
-            holes = holes_for_all_belts(self.feed_events, t_now_min, t1m, t2m, t3m, f1, f2, f3, D1, D2, D3)
+            holes = holes_for_all_belts(self.feed_events, t_now_min, t1m, t2m, t3m)
             for belt_idx, intervals in enumerate(holes):
                 try:
-                    freq = self.seg_speeds[belt_idx] if belt_idx < len(self.seg_speeds) else 0.0
-                    if freq and math.isfinite(freq):
-                        converted = [(start / freq * 60.0, end / freq * 60.0) for start, end in intervals]
-                    else:
-                        converted = []
-                    self.bars[belt_idx].set_holes(converted)
+                    self.bars[belt_idx].set_holes(intervals)
                 except Exception:
                     pass
         except Exception:
