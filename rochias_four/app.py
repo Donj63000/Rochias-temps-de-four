@@ -1264,6 +1264,9 @@ class FourApp(tk.Tk):
             t2s_min=float(parts_minutes[1]),
             t3s_min=float(parts_minutes[2]),
         )
+        cells_belt1 = visible_cells_for_tapis(1)
+        cells_belt2 = visible_cells_for_tapis(2)
+        cells_belt3 = visible_cells_for_tapis(3)
         # ---- Détails segments: entrée / cellules / transferts ----
         for lbl in getattr(self, "bar_duration_labels", []):
             try:
@@ -1299,19 +1302,18 @@ class FourApp(tk.Tk):
                 pass
 
             # Marqueurs réalistes sur les barres (fin de chaque sous-segment sauf le dernier)
-            blk1 = [("entry1", seg_times.get("entry1", 0.0)),
-                    ("c1", seg_times.get("c1", 0.0)),
-                    ("c2", seg_times.get("c2", 0.0)),
-                    ("c3", seg_times.get("c3", 0.0))]
+            blk1 = [("entry1", seg_times.get("entry1", 0.0))]
+            for cell_id in cells_belt1:
+                blk1.append((f"c{cell_id}", seg_times.get(f"c{cell_id}", 0.0)))
             m1 = cumulative_markers_for_bar(blk1, t1)
 
             blk2 = []
-            for cell_id in visible_cells_for_tapis(2):
+            for cell_id in cells_belt2:
                 blk2.append((f"c{cell_id}", seg_times.get(f"c{cell_id}", 0.0)))
             m2 = cumulative_markers_for_bar(blk2, t2)
 
             blk3 = []
-            for cell_id in visible_cells_for_tapis(3):
+            for cell_id in cells_belt3:
                 blk3.append((f"c{cell_id}", seg_times.get(f"c{cell_id}", 0.0)))
             m3 = cumulative_markers_for_bar(blk3, t3)
 
@@ -1341,9 +1343,6 @@ class FourApp(tk.Tk):
         except Exception:
             h0_cm = 2.0
         th = thickness_and_accum(self.seg_speeds[0], self.seg_speeds[1], self.seg_speeds[2], h0_cm)
-        cells_belt1 = visible_cells_for_tapis(1)
-        cells_belt2 = visible_cells_for_tapis(2)
-        cells_belt3 = visible_cells_for_tapis(3)
         n1 = max(1, len(cells_belt1))
         n2 = max(1, len(cells_belt2))
         n3 = max(1, len(cells_belt3))
