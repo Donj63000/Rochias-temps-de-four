@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import tkinter as tk
 from tkinter import ttk
+
 from .segments import GEOM, breakdown_for_belt
 from .utils import fmt_hms
 
@@ -21,7 +23,6 @@ class DetailsWindow(tk.Toplevel):
 
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True)
-
         self.tabs = {}
         for i in (1, 2, 3):
             frame = ttk.Frame(self.nb)
@@ -29,16 +30,27 @@ class DetailsWindow(tk.Toplevel):
             self.tabs[i] = self._build_tab(frame, i)
 
         self._populate()
-
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_tab(self, parent, belt_index: int):
+        # Bandeau supérieur (fréquence & rappel s/m)
         top = ttk.Frame(parent)
         top.pack(fill="x", padx=12, pady=(12, 6))
         lbl_freq = ttk.Label(top, text="f = -- Hz")
         lbl_freq.pack(side="left")
         lbl_sperm = ttk.Label(top, text=" | Temps pour 1 m = -- s")
         lbl_sperm.pack(side="left")
+
+        # >>> Rappel explicite pour éviter toute confusion
+        legend = ttk.Label(
+            parent,
+            text=(
+                "RAPPEL : le temps de CHAUFFE (∑ cellules) est inclus dans le temps de CONVOYAGE "
+                "(pré + chauffe + transfert). Le TOTAL de ligne = somme des temps de CONVOYAGE des 3 tapis."
+            ),
+            justify="left",
+        )
+        legend.pack(fill="x", padx=12, pady=(0, 6))
 
         cols = ("segment", "longueur_cm", "temps_s", "temps_hms")
         tree = ttk.Treeview(parent, columns=cols, show="headings", height=12)
@@ -60,15 +72,20 @@ class DetailsWindow(tk.Toplevel):
         lbl_resume = ttk.Label(footer, text="--")
         lbl_resume.pack(anchor="e")
 
-        return {"lbl_freq": lbl_freq, "lbl_sperm": lbl_sperm, "tree": tree, "lbl_resume": lbl_resume}
+        return {
+            "lbl_freq": lbl_freq,
+            "lbl_sperm": lbl_sperm,
+            "tree": tree,
+            "lbl_resume": lbl_resume,
+        }
 
     def _populate(self):
         calc = getattr(self.app, "last_calc", None)
         if not calc:
             return
 
-        # seconds de convoyage par tapis (déjà calculés par l’app)
-        t1 = float(self.app.seg_durations[0]) if self.app.seg_durations else float(calc["t1_hms"].split("|")[0])  # robustesse
+        # secondes de CONVOYAGE par tapis (déjà calculées par l’app)
+        t1 = float(self.app.seg_durations[0]) if self.app.seg_durations else float(calc["t1_hms"].split("|")[0])
         t2 = float(self.app.seg_durations[1]) if self.app.seg_durations else 0.0
         t3 = float(self.app.seg_durations[2]) if self.app.seg_durations else 0.0
         conv_secs = {1: t1, 2: t2, 3: t3}
@@ -85,7 +102,9 @@ class DetailsWindow(tk.Toplevel):
             g = br["geom"]
 
             tab["lbl_freq"].config(text=f"f = {freqs[i]:.2f} Hz")
-            tab["lbl_sperm"].config(text=f" | Temps pour 1 m = {br['s_per_m']:.2f} s/m ({fmt_hms(br['s_per_m'])} par m)")
+            tab["lbl_sperm"].config(
+                text=f" | Temps pour 1 m = {br['s_per_m']:.2f} s/m ({fmt_hms(br['s_per_m'])} par m)"
+            )
 
             def add(seg, Lcm, sec):
                 tree.insert("", "end", values=(seg, f"{Lcm:.1f}", f"{sec:.2f}", fmt_hms(sec)))
@@ -102,7 +121,10 @@ class DetailsWindow(tk.Toplevel):
             # Contrôle d’écart (numérique)
             diff = br["convoy_sec"] - br["convoy_rebuilt_sec"]
             tab["lbl_resume"].config(
-                text=f"Contrôle: somme segments = {fmt_hms(br['convoy_rebuilt_sec'])} | officiel convoyage = {fmt_hms(br['convoy_sec'])} | écart = {diff:.3f} s"
+                text=(
+                    f"Contrôle: somme segments = {fmt_hms(br['convoy_rebuilt_sec'])} | "
+                    f"officiel convoyage = {fmt_hms(br['convoy_sec'])} | écart = {diff:.3f} s"
+                )
             )
 
     def refresh_from_app(self):
